@@ -124,13 +124,14 @@ const STORE_KEY = "werkuren.v1";
 const DAY_NAMES = ["Maandag","Dinsdag","Woensdag","Donderdag","Vrijdag","Zaterdag"];
 
 /* ---------- opslag ---------- */
-let state = { records: {}, rate: 13, lastExport: null };
+let state = { records: {}, deleted: {}, rate: 13, lastExport: null };
 function loadState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (raw) {
       const p = JSON.parse(raw);
       state.records = p.records || {};
+      state.deleted = p.deleted || {};
       state.rate = typeof p.rate === "number" ? p.rate : 13;
       state.lastExport = p.lastExport || null;
     }
@@ -283,7 +284,7 @@ function buildEditor(key, rec) {
   q("#f-clear").addEventListener("click", () => {
     if (!confirm("Deze dag leegmaken?")) return;
     editorRefs.start.value = editorRefs.end.value = editorRefs.clients.value = editorRefs.purch.value = "";
-    flush(true);
+    flush(true, true);
   });
   return ed;
 }
@@ -295,7 +296,7 @@ function schedule() {
   saveTimer = setTimeout(() => flush(true), 500);
 }
 
-function flush(rerenderHeader) {
+function flush(rerenderHeader, forceDeleteMark) {
   clearTimeout(saveTimer); saveTimer = null;
   const r = editorRefs;
   if (!r || !document.body.contains(r.start)) return;
@@ -306,15 +307,23 @@ function flush(rerenderHeader) {
   try { parseTime(start); parseTime(end); } catch (e) { msg = e.message; }
   r.err.textContent = msg;
 
-  if (!start && !end && !clientsText.trim() && !purchText.trim()) {
-    delete state.records[r.key];
+  const old = state.records[r.key];
+  const isEmpty = !start && !end && !clientsText.trim() && !purchText.trim();
+  if (isEmpty) {
+    // Alleen een verwijdermarkering als de dag op de telefoon bestond of expliciet is leeggemaakt.
+    if (old || forceDeleteMark) { delete state.records[r.key]; state.deleted[r.key] = new Date().toISOString(); }
   } else {
-    state.records[r.key] = {
-      start: start, end: end,
-      clients: parseClients(clientsText), purchases: parsePurchases(purchText),
-      clients_text: clientsText, purchases_text: purchText,
-      updated: new Date().toISOString()
-    };
+    const unchanged = old && old.start === start && old.end === end &&
+      (old.clients_text || "") === clientsText && (old.purchases_text || "") === purchText;
+    if (!unchanged) {
+      state.records[r.key] = {
+        start: start, end: end,
+        clients: parseClients(clientsText), purchases: parsePurchases(purchText),
+        clients_text: clientsText, purchases_text: purchText,
+        updated: new Date().toISOString()
+      };
+      delete state.deleted[r.key];
+    }
   }
   if (saveState()) r.saved.textContent = "Automatisch bewaard";
   if (rerenderHeader) refreshHeaders();
@@ -364,7 +373,7 @@ function buildExport() {
   flush();
   const recs = {};
   Object.keys(state.records).sort().forEach(k => { recs[k] = state.records[k]; });
-  return JSON.stringify({ format: "werkuren-telefoon", version: 1, exported: new Date().toISOString(), records: recs }, null, 2);
+  return JSON.stringify({ format: "werkuren-telefoon", version: 1, exported: new Date().toISOString(), records: recs, deleted: state.deleted }, null, 2);
 }
 function markExported() { state.lastExport = new Date().toISOString(); saveState(); $("lastExport").textContent = "Laatst gedeeld: " + new Date(state.lastExport).toLocaleString("nl-BE"); }
 
