@@ -78,6 +78,15 @@
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .chips button{min-height:34px;padding:4px 10px;border-radius:999px;font-size:14px}
 .toast.act{pointer-events:auto}.toast button{margin-left:12px;background:none;border:0;color:#7fd3a8;font-weight:700;min-height:0;padding:0 4px;text-decoration:underline}
+.day-head{padding:14px 16px}
+.day-head .top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.day-head .name{font-size:18px;font-weight:700}.day-head .date{font-size:15px;color:var(--muted);margin-left:8px}
+.day-head .nums{display:flex;gap:14px;align-items:baseline}
+.day-head .hours,.day-head .pay{font-size:18px;min-width:0}
+.day-head .line{font-size:16px;line-height:1.4;margin-top:6px;color:var(--text);overflow-wrap:anywhere}
+.totals .big{font-size:22px}
+#totMonth{background:var(--bg);border-radius:10px;padding:12px 14px;margin-top:12px;font-size:16px;line-height:1.5}
+.editor label{font-size:14px}
 </style>
 </head>
 <body>
@@ -234,10 +243,9 @@ function headHTML(i, d, rec) {
   const cl = (rec.clients || []).map(c => typeof c === "object" ? c.name : c).filter(Boolean).join(", ");
   const pu = (rec.purchases || []).map(p => (p.store + " " + eur(+p.amount || 0)).trim()).join("; ");
   const t = rec.start || rec.end ? (rec.start || "—") + " – " + (rec.end || "—") : "";
-  return '<div class="top"><span class="name">' + DAY_NAMES[i] + '</span><span class="date">' + fmtShort(d) +
-    '</span><span class="sp"></span><span class="times">' + t + '</span><span class="hours' + (h ? "" : " zero") + '">' +
-    (h ? nl(h) : "—") + '</span><span class="pay">' + (h ? eur(h * state.rate) : "") + '</span></div>' +
-    (cl ? '<div class="sub">' + esc(cl) + '</div>' : "") + (pu ? '<div class="sub">🧾 ' + esc(pu) + '</div>' : "");
+  return '<div class="top"><div><span class="name">' + DAY_NAMES[i] + '</span><span class="date">' + fmtShort(d) + '</span></div>' +
+    '<div class="nums"><span class="hours' + (h ? "" : " zero") + '">' + (h ? nl(h) + " u" : "—") + '</span><span class="pay">' + (h ? eur(h * state.rate) : "") + '</span></div></div>' +
+    (t ? '<div class="line">🕐 ' + t + '</div>' : "") + (cl ? '<div class="line">👤 ' + esc(cl) + '</div>' : "") + (pu ? '<div class="line">🧾 ' + esc(pu) + '</div>' : "");
 }
 function updateTotals() {
   let h = 0, p = 0;
@@ -257,7 +265,7 @@ function updateTotals() {
     (r.purchases || []).forEach(y => { mp += +y.amount || 0; });
   }
   const mn = new Date(+pre.slice(0, 4), +pre.slice(5, 7) - 1, 1).toLocaleString("nl-BE", { month: "long", year: "numeric" });
-  $("totMonth").textContent = mn + ": " + nl(mh) + " uur · " + eur(mh * state.rate) + " · " + md + " dagen" + (mp ? " · aankopen " + eur(mp) : "");
+  $("totMonth").innerHTML = "<b>" + mn + "</b><br>" + nl(mh) + " uur &middot; " + eur(mh * state.rate) + "<br>" + md + " dagen" + (mp ? " &middot; aankopen " + eur(mp) : "");
 }
 function render() {
   $("weekLabel").textContent = fmt(weekStart) + "  t/m  " + fmt(addDays(weekStart, 5));
