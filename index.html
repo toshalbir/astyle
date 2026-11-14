@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Werkuren">
+<meta name="theme-color" content="#17365d">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Werkuren</title>
+<style>
+  :root {
+    --navy: #17365d; --navy-2: #dbeafe; --green: #176b45; --bg: #f1f5f9; --card: #ffffff;
+    --line: #d5dde8; --text: #14202e; --muted: #64748b; --danger: #b42318;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0e1620; --card: #17222f; --line: #2b3a4c; --text: #e8eef5; --muted: #93a4b8; --green: #5fd09a; --danger: #ff8a7a; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; font-size: 16px; }
+  header { background: var(--navy); color: #fff; padding: calc(env(safe-area-inset-top, 0px) + 14px) 18px 14px; }
+  header h1 { margin: 0; font-size: 22px; letter-spacing: .2px; }
+  header p { margin: 3px 0 0; font-size: 13px; color: var(--navy-2); }
+  main { max-width: 560px; margin: 0 auto; padding: 14px 14px calc(env(safe-area-inset-bottom, 0px) + 30px); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin-bottom: 12px; }
+  .weeknav { display: flex; align-items: center; gap: 8px; }
+  .weeknav .label { flex: 1; text-align: center; font-weight: 700; font-size: 15px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+    border-radius: 10px; padding: 10px 14px; min-height: 44px; }
+  button:active { transform: scale(.98); }
+  button.primary { background: var(--navy); color: #fff; border-color: var(--navy); font-weight: 600; }
+  @media (prefers-color-scheme: dark) { button.primary { background: #2c5a94; border-color: #2c5a94; } }
+  button.link { border: 0; background: none; color: var(--muted); text-decoration: underline; min-height: 36px; padding: 6px; }
+  .today-btn { width: 100%; margin-top: 8px; }
+  .day { border: 1px solid var(--line); border-radius: 12px; margin-bottom: 8px; background: var(--card); overflow: hidden; }
+  .day.open { border-color: var(--navy); box-shadow: 0 0 0 1px var(--navy); }
+  .day-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px; width: 100%; text-align: left;
+    border: 0; border-radius: 0; background: none; min-height: 56px; }
+  .day-head .name { font-weight: 700; }
+  .day-head .date { color: var(--muted); font-size: 13px; }
+  .day-head .spacer { flex: 1; }
+  .day-head .times { font-size: 14px; color: var(--muted); }
+  .day-head .hours { font-weight: 700; min-width: 52px; text-align: right; }
+  .day-head .hours.zero { color: var(--muted); font-weight: 400; }
+  .day.today .name::after { content: " · vandaag"; color: var(--green); font-weight: 600; font-size: 12px; }
+  .editor { padding: 0 14px 14px; border-top: 1px solid var(--line); }
+  .editor label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
+  .row2 { display: flex; gap: 10px; }
+  .row2 > div { flex: 1; }
+  input, textarea { width: 100%; font: inherit; font-size: 17px; /* 17px avoids iOS zoom on focus */
+    border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; background: var(--bg); color: var(--text); }
+  textarea { min-height: 84px; resize: vertical; }
+  input:focus, textarea:focus { outline: 2px solid var(--navy); outline-offset: 0; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .err { color: var(--danger); font-size: 13px; margin-top: 4px; min-height: 0; }
+  .saved { font-size: 12px; color: var(--green); margin-top: 10px; display: flex; justify-content: space-between; align-items: center; }
+  .totals { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .totals .big { font-size: 18px; font-weight: 700; }
+  .totals .pay { color: var(--green); }
+  .rate-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; color: var(--muted); }
+  .rate-row input { width: 90px; font-size: 16px; text-align: right; padding: 6px 10px; }
+  h2 { font-size: 15px; margin: 0 0 6px; }
+  .sync p { margin: 4px 0 10px; font-size: 14px; color: var(--muted); line-height: 1.4; }
+  .sync .btns { display: flex; flex-direction: column; gap: 8px; }
+  .toast { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 20px); transform: translateX(-50%);
+    background: #111c2a; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0;
+    pointer-events: none; transition: opacity .2s; max-width: 90%; text-align: center; }
+  .toast.show { opacity: 1; }
+  .install { font-size: 13px; color: var(--muted); line-height: 1.4; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Werkuren</h1>
+  <p>Uren, klanten en aankopen &bull; maandag t/m zaterdag</p>
+</header>
+<main>
+  <div class="card install" id="installHint">
+    Tip: tik op <b>Deel</b> &rarr; <b>Zet op beginscherm</b> om dit als app te gebruiken.
+  </div>
+
+  <div class="card">
+    <div class="weeknav">
+      <button id="prev" aria-label="Vorige week">&#9664;</button>
+      <div class="label" id="weekLabel"></div>
+      <button id="next" aria-label="Volgende week">&#9654;</button>
+    </div>
+    <button class="today-btn" id="thisWeek">Deze week</button>
+  </div>
+
+  <div id="days"></div>
+
+  <div class="card">
+    <div class="totals">
+      <div class="big" id="totHours">Totaal uren: 0,00</div>
+      <div class="big pay" id="totPay"></div>
+    </div>
+    <div class="rate-row">
+      <span>Uurloon</span>
+      <input id="rate" inputmode="decimal" value="13,00" aria-label="Uurloon in euro">
+      <span>&euro;/uur (alleen voor weergave hier)</span>
+    </div>
+  </div>
+
+  <div class="card sync">
+    <h2>Naar je pc sturen</h2>
+    <p>Maak een bestand met alle ingevoerde dagen en stuur het naar je pc (mail, WhatsApp, OneDrive&hellip;). In de pc-app kies je daarna <b>Importeer van telefoon</b>.</p>
+    <div class="btns">
+      <button class="primary" id="share">Bestand delen / bewaren</button>
+      <button id="copy">Kopieer als tekst</button>
+    </div>
+    <p id="lastExport" style="margin-top:10px;margin-bottom:0"></p>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const STORE_KEY = "werkuren.v1";
+const DAY_NAMES = ["Maandag","Dinsdag","Woensdag","Donderdag","Vrijdag","Zaterdag"];
+
+/* ---------- opslag ---------- */
+let state = { records: {}, rate: 13, lastExport: null };
+function loadState() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      state.records = p.records || {};
+      state.rate = typeof p.rate === "number" ? p.rate : 13;
+      state.lastExport = p.lastExport || null;
+    }
+  } catch (e) { /* lege start */ }
+}
+function saveState() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); return true; }
+  catch (e) { toast("Opslaan mislukt. Is de opslag vol of geblokkeerd?"); return false; }
+}
+
+/* ---------- datum helpers ---------- */
+const pad = n => String(n).padStart(2, "0");
+function iso(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+function mondayOf(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const wd = (x.getDay() + 6) % 7;           // maandag = 0
+  x.setDate(x.getDate() - wd);
+  return x;
+}
+function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function fmt(d) { return pad(d.getDate()) + "-" + pad(d.getMonth() + 1) + "-" + d.getFullYear(); }
+function fmtShort(d) { return pad(d.getDate()) + "-" + pad(d.getMonth() + 1); }
+
+/* ---------- tijd en uren: zelfde regels als de pc-app ---------- */
+function parseTime(v) {
+  v = (v || "").trim();
+  if (!v) return null;
+  let m = v.match(/^(\d{1,2})$/);
+  if (m) { const h = +m[1]; if (h >= 0 && h <= 23) return h * 60; }
+  m = v.match(/^(\d{1,2})[:.](\d{2})$/);
+  if (m) { const h = +m[1], mi = +m[2]; if (h >= 0 && h <= 23 && mi >= 0 && mi <= 59) return h * 60 + mi; }
+  throw new Error("Ongeldig tijdstip: " + v + ". Gebruik bijvoorbeeld 8 of 8:30.");
+}
+function hoursBetween(s, e) {
+  let a, b;
+  try { a = parseTime(s); b = parseTime(e); } catch (err) { return 0; }
+  if (a === null || b === null) return 0;
+  let min = b - a;
+  if (min < 0) min += 24 * 60;
+  return min / 60;
+}
+const nl = (n, dec = 2) => n.toFixed(dec).replace(".", ",");
+
+/* ---------- parsing van de tekstvelden: zelfde regels als de pc-app ---------- */
+function parseClients(text) {
+  const out = [];
+  text.split(/\r?\n/).forEach(line => {
+    line = line.trim();
+    if (!line) return;
+    const name = line.split("|")[0].trim();
+    if (name) out.push({ name: name, materials: "" });
+  });
+  return out;
+}
+function parsePurchases(text) {
+  const out = [];
+  text.split(/\r?\n/).forEach(line => {
+    line = line.trim();
+    if (!line) return;
+    const m = line.match(/^(.*?)\s+([0-9]+(?:[.,][0-9]{1,2})?)\s*€?$/);
+    if (m && m[1].trim()) {
+      const amount = parseFloat(m[2].replace(",", "."));
+      if (!isNaN(amount) && amount >= 0) out.push({ store: m[1].trim(), amount: amount });
+    }
+  });
+  return out;
+}
+
+/* ---------- weergave ---------- */
+let weekStart = mondayOf(new Date());
+let selected = iso(new Date());
+if (!isInWeek(selected)) selected = iso(weekStart);
+function isInWeek(key) {
+  for (let i = 0; i < 6; i++) if (iso(addDays(weekStart, i)) === key) return true;
+  return false;
+}
+
+const $ = id => document.getElementById(id);
+function recOf(key) { return state.records[key] || { start: "", end: "", clients: [], purchases: [] }; }
+
+function render() {
+  $("weekLabel").textContent = fmt(weekStart) + "  t/m  " + fmt(addDays(weekStart, 5));
+  const wrap = $("days");
+  wrap.innerHTML = "";
+  const todayKey = iso(new Date());
+  let totalH = 0;
+
+  for (let i = 0; i < 6; i++) {
+    const d = addDays(weekStart, i), key = iso(d), rec = recOf(key);
+    const h = hoursBetween(rec.start, rec.end);
+    totalH += h;
+    const open = key === selected;
+
+    const box = document.createElement("div");
+    box.className = "day" + (open ? " open" : "") + (key === todayKey ? " today" : "");
+
+    const head = document.createElement("button");
+    head.className = "day-head";
+    head.innerHTML =
+      '<div><div class="name">' + DAY_NAMES[i] + '</div><div class="date">' + fmtShort(d) + '</div></div>' +
+      '<div class="spacer"></div>' +
+      '<div class="times">' + (rec.start || rec.end ? (rec.start || "—") + " – " + (rec.end || "—") : "") + '</div>' +
+      '<div class="hours' + (h ? "" : " zero") + '">' + (h ? nl(h) : "—") + '</div>';
+    head.addEventListener("click", () => { flush(); selected = open ? null : key; render(); });
+    box.appendChild(head);
+
+    if (open) box.appendChild(buildEditor(key, rec));
+    wrap.appendChild(box);
+  }
+
+  $("totHours").textContent = "Totaal uren: " + nl(totalH);
+  $("totPay").textContent = "€ " + nl(totalH * state.rate);
+  $("rate").value = nl(state.rate);
+  $("lastExport").textContent = state.lastExport
+    ? "Laatst gedeeld: " + new Date(state.lastExport).toLocaleString("nl-BE") : "";
+}
+
+/* ---------- editor ---------- */
+let saveTimer = null, editorRefs = null;
+function buildEditor(key, rec) {
+  const ed = document.createElement("div");
+  ed.className = "editor";
+  const clientsDraft = rec.clients_text !== undefined ? rec.clients_text
+    : (rec.clients || []).map(c => (typeof c === "object" ? c.name : c)).join("\n");
+  const purchasesDraft = rec.purchases_text !== undefined ? rec.purchases_text
+    : (rec.purchases || []).map(p => (p.store + " " + String(p.amount).replace(".", ",")).trim()).join("\n");
+
+  ed.innerHTML =
+    '<div class="row2">' +
+      '<div><label for="f-start">Beginuur</label><input id="f-start" inputmode="numeric" autocomplete="off" placeholder="8 of 8:30"></div>' +
+      '<div><label for="f-end">Einduur</label><input id="f-end" inputmode="numeric" autocomplete="off" placeholder="17 of 17:30"></div>' +
+    '</div>' +
+    '<div class="err" id="f-err"></div>' +
+    '<label for="f-clients">Klanten (één naam per regel)</label>' +
+    '<textarea id="f-clients" autocapitalize="words"></textarea>' +
+    '<label for="f-purch">Aankopen (één per regel: winkel en bedrag)</label>' +
+    '<textarea id="f-purch"></textarea>' +
+    '<div class="hint">Voorbeeld: Brico 25,30</div>' +
+    '<div class="saved"><span id="f-saved">Automatisch bewaard</span><button class="link" id="f-clear">Dag leegmaken</button></div>';
+
+  const q = id => ed.querySelector(id);
+  q("#f-start").value = rec.start || "";
+  q("#f-end").value = rec.end || "";
+  q("#f-clients").value = clientsDraft;
+  q("#f-purch").value = purchasesDraft;
+  editorRefs = { key, start: q("#f-start"), end: q("#f-end"), clients: q("#f-clients"), purch: q("#f-purch"),
+                 err: q("#f-err"), saved: q("#f-saved") };
+
+  ["start", "end", "clients", "purch"].forEach(k => editorRefs[k].addEventListener("input", schedule));
+  q("#f-clear").addEventListener("click", () => {
+    if (!confirm("Deze dag leegmaken?")) return;
+    editorRefs.start.value = editorRefs.end.value = editorRefs.clients.value = editorRefs.purch.value = "";
+    flush(true);
+  });
+  return ed;
+}
+
+function schedule() {
+  if (!editorRefs) return;
+  editorRefs.saved.textContent = "Wijzigingen worden bewaard…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => flush(true), 500);
+}
+
+function flush(rerenderHeader) {
+  clearTimeout(saveTimer); saveTimer = null;
+  const r = editorRefs;
+  if (!r || !document.body.contains(r.start)) return;
+  const start = r.start.value.trim(), end = r.end.value.trim();
+  const clientsText = r.clients.value, purchText = r.purch.value;
+
+  let msg = "";
+  try { parseTime(start); parseTime(end); } catch (e) { msg = e.message; }
+  r.err.textContent = msg;
+
+  if (!start && !end && !clientsText.trim() && !purchText.trim()) {
+    delete state.records[r.key];
+  } else {
+    state.records[r.key] = {
+      start: start, end: end,
+      clients: parseClients(clientsText), purchases: parsePurchases(purchText),
+      clients_text: clientsText, purchases_text: purchText,
+      updated: new Date().toISOString()
+    };
+  }
+  if (saveState()) r.saved.textContent = "Automatisch bewaard";
+  if (rerenderHeader) refreshHeaders();
+}
+
+/* Alleen de kopregels en totalen vernieuwen, zodat het toetsenbord open blijft. */
+function refreshHeaders() {
+  let totalH = 0;
+  const boxes = $("days").children;
+  for (let i = 0; i < 6; i++) {
+    const key = iso(addDays(weekStart, i)), rec = recOf(key), h = hoursBetween(rec.start, rec.end);
+    totalH += h;
+    const head = boxes[i].querySelector(".day-head");
+    head.querySelector(".times").textContent = rec.start || rec.end ? (rec.start || "—") + " – " + (rec.end || "—") : "";
+    const hh = head.querySelector(".hours");
+    hh.textContent = h ? nl(h) : "—";
+    hh.className = "hours" + (h ? "" : " zero");
+  }
+  $("totHours").textContent = "Totaal uren: " + nl(totalH);
+  $("totPay").textContent = "€ " + nl(totalH * state.rate);
+}
+
+/* ---------- navigatie ---------- */
+function goWeek(days) {
+  flush();
+  weekStart = addDays(weekStart, days);
+  selected = iso(weekStart);
+  render();
+}
+$("prev").addEventListener("click", () => goWeek(-7));
+$("next").addEventListener("click", () => goWeek(7));
+$("thisWeek").addEventListener("click", () => {
+  flush();
+  weekStart = mondayOf(new Date());
+  const t = iso(new Date());
+  selected = isInWeek(t) ? t : iso(weekStart);   // zondag: eerste dag van de week
+  render();
+});
+$("rate").addEventListener("change", () => {
+  const v = parseFloat($("rate").value.replace("€", "").replace(",", "."));
+  if (!isNaN(v) && v >= 0 && v <= 100000) { state.rate = v; saveState(); }
+  render();
+});
+
+/* ---------- export naar pc ---------- */
+function buildExport() {
+  flush();
+  const recs = {};
+  Object.keys(state.records).sort().forEach(k => { recs[k] = state.records[k]; });
+  return JSON.stringify({ format: "werkuren-telefoon", version: 1, exported: new Date().toISOString(), records: recs }, null, 2);
+}
+function markExported() { state.lastExport = new Date().toISOString(); saveState(); $("lastExport").textContent = "Laatst gedeeld: " + new Date(state.lastExport).toLocaleString("nl-BE"); }
+
+$("share").addEventListener("click", async () => {
+  const json = buildExport();
+  const name = "uren-telefoon-" + iso(new Date()) + ".json";
+  const file = new File([json], name, { type: "application/json" });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: "Werkuren" });
+      markExported();
+      return;
+    }
+  } catch (e) {
+    if (e && e.name === "AbortError") return;      // gebruiker annuleerde
+  }
+  // Terugval: gewoon downloaden
+  const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  markExported();
+  toast("Bestand bewaard: " + name);
+});
+
+$("copy").addEventListener("click", async () => {
+  const json = buildExport();
+  try { await navigator.clipboard.writeText(json); markExported(); toast("Gekopieerd. Plak het in een mail of bericht aan jezelf."); }
+  catch (e) { toast("Kopiëren lukt hier niet. Gebruik de deelknop."); }
+});
+
+/* ---------- toast + start ---------- */
+let toastTimer;
+function toast(t) {
+  const el = $("toast"); el.textContent = t; el.classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
+}
+window.addEventListener("pagehide", () => flush());
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
+
+if (/iPhone|iPad/.test(navigator.userAgent) && !window.navigator.standalone) $("installHint").style.display = "block";
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
+
+loadState();
+render();
+</script>
+</body>
+</html>
