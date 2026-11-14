@@ -77,6 +77,7 @@
 .day-head .sub{font-size:13px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
 .chips button{min-height:34px;padding:4px 10px;border-radius:999px;font-size:14px}
+.toast.act{pointer-events:auto}.toast button{margin-left:12px;background:none;border:0;color:#7fd3a8;font-weight:700;min-height:0;padding:0 4px;text-decoration:underline}
 </style>
 </head>
 <body>
@@ -105,6 +106,7 @@
       <div class="big" id="totHours">Totaal uren: 0,00</div>
       <div class="big pay" id="totPay"></div>
     </div>
+    <div id="totMonth" style="margin-top:8px;font-weight:600"></div>
     <div class="hint" id="totBuy"></div>
     <div class="rate-row">
       <span>Uurloon</span>
@@ -247,6 +249,15 @@ function updateTotals() {
   $("totHours").textContent = "Totaal uren: " + nl(h);
   $("totPay").textContent = "Week: " + eur(h * state.rate);
   $("totBuy").textContent = p ? "Aankopen deze week: " + eur(p) : "";
+  const ref = selected && isInWeek(selected) ? selected : iso(weekStart), pre = ref.slice(0, 7);
+  let mh = 0, mp = 0, md = 0;
+  for (const k in state.records) if (k.startsWith(pre)) {
+    const r = state.records[k], x = hoursBetween(r.start, r.end);
+    mh += x; if (x) md++;
+    (r.purchases || []).forEach(y => { mp += +y.amount || 0; });
+  }
+  const mn = new Date(+pre.slice(0, 4), +pre.slice(5, 7) - 1, 1).toLocaleString("nl-BE", { month: "long", year: "numeric" });
+  $("totMonth").textContent = mn + ": " + nl(mh) + " uur · " + eur(mh * state.rate) + " · " + md + " dagen" + (mp ? " · aankopen " + eur(mp) : "");
 }
 function render() {
   $("weekLabel").textContent = fmt(weekStart) + "  t/m  " + fmt(addDays(weekStart, 5));
@@ -303,9 +314,15 @@ function buildEditor(key, rec) {
   ["input", "focus"].forEach(ev => editorRefs.clients.addEventListener(ev, renderChips));
   renderChips();
   q("#f-clear").addEventListener("click", () => {
-    if (!confirm("Deze dag leegmaken?")) return;
+    const key = editorRefs.key, prevTomb = state.deleted[key];
+    const prev = state.records[key] ? JSON.parse(JSON.stringify(state.records[key])) : null;
     editorRefs.start.value = editorRefs.end.value = editorRefs.clients.value = editorRefs.purch.value = "";
-    flush(true, true);
+    flush(true, true); renderChips();
+    toast("Dag leeggemaakt.", "Ongedaan maken", () => {
+      if (prev) { prev.updated = new Date().toISOString(); state.records[key] = prev; delete state.deleted[key]; }
+      else if (prevTomb) state.deleted[key] = prevTomb; else delete state.deleted[key];
+      saveState(); render();
+    }, 9000);
   });
   return ed;
 }
@@ -460,9 +477,15 @@ $("restoreFile").addEventListener("change", async e => {
 
 /* ---------- toast + start ---------- */
 let toastTimer;
-function toast(t) {
-  const el = $("toast"); el.textContent = t; el.classList.add("show");
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove("show"), 3200);
+function toast(t, label, fn, ms) {
+  const el = $("toast"); el.textContent = t; el.classList.remove("act");
+  if (label) {
+    const b = document.createElement("button"); b.textContent = label;
+    b.addEventListener("click", () => { el.classList.remove("show", "act"); fn(); });
+    el.appendChild(b); el.classList.add("act");
+  }
+  el.classList.add("show"); clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show", "act"), ms || 3200);
 }
 window.addEventListener("pagehide", () => flush());
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });
