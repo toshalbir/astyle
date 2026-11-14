@@ -46,7 +46,7 @@
   .day-head .times { font-size: 14px; color: var(--muted); }
   .day-head .hours { font-weight: 700; min-width: 52px; text-align: right; }
   .day-head .hours.zero { color: var(--muted); font-weight: 400; }
-  .day.today .name::after { content: " · vandaag"; color: var(--green); font-weight: 600; font-size: 12px; }
+  .day.today .name::after { content: " ●"; color: var(--green); font-weight: 600; font-size: 12px; }
   .editor { padding: 0 14px 14px; border-top: 1px solid var(--line); }
   .editor label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 4px; }
   .row2 { display: flex; gap: 10px; }
@@ -71,6 +71,12 @@
     pointer-events: none; transition: opacity .2s; max-width: 90%; text-align: center; }
   .toast.show { opacity: 1; }
   .install { font-size: 13px; color: var(--muted); line-height: 1.4; display: none; }
+.day-head{display:block;padding:10px 12px;min-height:0}
+.day-head .top{display:flex;align-items:baseline;gap:8px}.day-head .sp{flex:1}
+.day-head .pay{color:var(--green);font-weight:700;min-width:72px;text-align:right}
+.day-head .sub{font-size:13px;color:var(--muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chips button{min-height:34px;padding:4px 10px;border-radius:999px;font-size:14px}
 </style>
 </head>
 <body>
@@ -99,6 +105,7 @@
       <div class="big" id="totHours">Totaal uren: 0,00</div>
       <div class="big pay" id="totPay"></div>
     </div>
+    <div class="hint" id="totBuy"></div>
     <div class="rate-row">
       <span>Uurloon</span>
       <input id="rate" inputmode="decimal" value="13,00" aria-label="Uurloon in euro">
@@ -114,6 +121,12 @@
       <button id="copy">Of: kopieer als tekst</button>
     </div>
     <p id="lastExport" style="margin-top:10px;margin-bottom:0"></p>
+  </div>
+<div class="card sync">
+    <h2>Herstellen van de pc</h2>
+    <p>Zodra de pc-app is geopend, staat <b>werkuren-pc-snapshot.json</b> in je synchronisatiemap. Kies dat bestand hier om ontbrekende dagen en klantnamen terug te zetten.</p>
+    <div class="btns"><button id="restore">Herstel van pc&hellip;</button></div>
+    <input type="file" id="restoreFile" accept=".json,application/json" hidden>
   </div>
 </main>
 <div class="toast" id="toast"></div>
@@ -212,41 +225,47 @@ function isInWeek(key) {
 const $ = id => document.getElementById(id);
 function recOf(key) { return state.records[key] || { start: "", end: "", clients: [], purchases: [] }; }
 
+const eur = n => "€ " + nl(n);
+const esc = t => String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function headHTML(i, d, rec) {
+  const h = hoursBetween(rec.start, rec.end);
+  const cl = (rec.clients || []).map(c => typeof c === "object" ? c.name : c).filter(Boolean).join(", ");
+  const pu = (rec.purchases || []).map(p => (p.store + " " + eur(+p.amount || 0)).trim()).join("; ");
+  const t = rec.start || rec.end ? (rec.start || "—") + " – " + (rec.end || "—") : "";
+  return '<div class="top"><span class="name">' + DAY_NAMES[i] + '</span><span class="date">' + fmtShort(d) +
+    '</span><span class="sp"></span><span class="times">' + t + '</span><span class="hours' + (h ? "" : " zero") + '">' +
+    (h ? nl(h) : "—") + '</span><span class="pay">' + (h ? eur(h * state.rate) : "") + '</span></div>' +
+    (cl ? '<div class="sub">' + esc(cl) + '</div>' : "") + (pu ? '<div class="sub">🧾 ' + esc(pu) + '</div>' : "");
+}
+function updateTotals() {
+  let h = 0, p = 0;
+  for (let i = 0; i < 6; i++) {
+    const rec = recOf(iso(addDays(weekStart, i)));
+    h += hoursBetween(rec.start, rec.end);
+    (rec.purchases || []).forEach(x => { p += +x.amount || 0; });
+  }
+  $("totHours").textContent = "Totaal uren: " + nl(h);
+  $("totPay").textContent = "Week: " + eur(h * state.rate);
+  $("totBuy").textContent = p ? "Aankopen deze week: " + eur(p) : "";
+}
 function render() {
   $("weekLabel").textContent = fmt(weekStart) + "  t/m  " + fmt(addDays(weekStart, 5));
-  const wrap = $("days");
-  wrap.innerHTML = "";
+  const wrap = $("days"); wrap.innerHTML = "";
   const todayKey = iso(new Date());
-  let totalH = 0;
-
   for (let i = 0; i < 6; i++) {
-    const d = addDays(weekStart, i), key = iso(d), rec = recOf(key);
-    const h = hoursBetween(rec.start, rec.end);
-    totalH += h;
-    const open = key === selected;
-
+    const d = addDays(weekStart, i), key = iso(d), rec = recOf(key), open = key === selected;
     const box = document.createElement("div");
     box.className = "day" + (open ? " open" : "") + (key === todayKey ? " today" : "");
-
     const head = document.createElement("button");
-    head.className = "day-head";
-    head.innerHTML =
-      '<div><div class="name">' + DAY_NAMES[i] + '</div><div class="date">' + fmtShort(d) + '</div></div>' +
-      '<div class="spacer"></div>' +
-      '<div class="times">' + (rec.start || rec.end ? (rec.start || "—") + " – " + (rec.end || "—") : "") + '</div>' +
-      '<div class="hours' + (h ? "" : " zero") + '">' + (h ? nl(h) : "—") + '</div>';
+    head.className = "day-head"; head.innerHTML = headHTML(i, d, rec);
     head.addEventListener("click", () => { flush(); selected = open ? null : key; render(); });
     box.appendChild(head);
-
     if (open) box.appendChild(buildEditor(key, rec));
     wrap.appendChild(box);
   }
-
-  $("totHours").textContent = "Totaal uren: " + nl(totalH);
-  $("totPay").textContent = "€ " + nl(totalH * state.rate);
+  updateTotals();
   $("rate").value = nl(state.rate);
-  $("lastExport").textContent = state.lastExport
-    ? "Laatst gedeeld: " + new Date(state.lastExport).toLocaleString("nl-BE") : "";
+  $("lastExport").textContent = state.lastExport ? "Laatst gedeeld: " + new Date(state.lastExport).toLocaleString("nl-BE") : "";
 }
 
 /* ---------- editor ---------- */
@@ -266,7 +285,7 @@ function buildEditor(key, rec) {
     '</div>' +
     '<div class="err" id="f-err"></div>' +
     '<label for="f-clients">Klanten (één naam per regel)</label>' +
-    '<textarea id="f-clients" autocapitalize="words"></textarea>' +
+    '<textarea id="f-clients" autocapitalize="words"></textarea><div class="chips" id="f-chips"></div>' +
     '<label for="f-purch">Aankopen (één per regel: winkel en bedrag)</label>' +
     '<textarea id="f-purch"></textarea>' +
     '<div class="hint">Voorbeeld: Brico 25,30</div>' +
@@ -278,9 +297,11 @@ function buildEditor(key, rec) {
   q("#f-clients").value = clientsDraft;
   q("#f-purch").value = purchasesDraft;
   editorRefs = { key, start: q("#f-start"), end: q("#f-end"), clients: q("#f-clients"), purch: q("#f-purch"),
-                 err: q("#f-err"), saved: q("#f-saved") };
+                 err: q("#f-err"), saved: q("#f-saved"), chips: q("#f-chips") };
 
   ["start", "end", "clients", "purch"].forEach(k => editorRefs[k].addEventListener("input", schedule));
+  ["input", "focus"].forEach(ev => editorRefs.clients.addEventListener(ev, renderChips));
+  renderChips();
   q("#f-clear").addEventListener("click", () => {
     if (!confirm("Deze dag leegmaken?")) return;
     editorRefs.start.value = editorRefs.end.value = editorRefs.clients.value = editorRefs.purch.value = "";
@@ -289,6 +310,23 @@ function buildEditor(key, rec) {
   return ed;
 }
 
+function renderChips() {
+  const r = editorRefs; if (!r) return;
+  const cnt = {};
+  for (const k in state.records) for (const c of state.records[k].clients || []) {
+    const n = String(typeof c === "object" ? c.name : c || "").trim(); if (n) cnt[n] = (cnt[n] || 0) + 1;
+  }
+  const lines = r.clients.value.split("\n"), last = lines[lines.length - 1].trim().toLowerCase();
+  const have = new Set(lines.slice(0, -1).map(l => l.split("|")[0].trim().toLowerCase()));
+  const list = Object.keys(cnt).filter(n => { const l = n.toLowerCase(); return !have.has(l) && l !== last && (!last || l.includes(last)); })
+    .sort((a, b) => cnt[b] - cnt[a] || a.localeCompare(b)).slice(0, 8);
+  r.chips.innerHTML = "";
+  list.forEach(n => {
+    const b = document.createElement("button"); b.type = "button"; b.textContent = n;
+    b.addEventListener("click", () => { lines[lines.length - 1] = n; r.clients.value = lines.join("\n") + "\n"; r.clients.focus(); schedule(); renderChips(); });
+    r.chips.appendChild(b);
+  });
+}
 function schedule() {
   if (!editorRefs) return;
   editorRefs.saved.textContent = "Wijzigingen worden bewaard…";
@@ -331,19 +369,12 @@ function flush(rerenderHeader, forceDeleteMark) {
 
 /* Alleen de kopregels en totalen vernieuwen, zodat het toetsenbord open blijft. */
 function refreshHeaders() {
-  let totalH = 0;
   const boxes = $("days").children;
   for (let i = 0; i < 6; i++) {
-    const key = iso(addDays(weekStart, i)), rec = recOf(key), h = hoursBetween(rec.start, rec.end);
-    totalH += h;
-    const head = boxes[i].querySelector(".day-head");
-    head.querySelector(".times").textContent = rec.start || rec.end ? (rec.start || "—") + " – " + (rec.end || "—") : "";
-    const hh = head.querySelector(".hours");
-    hh.textContent = h ? nl(h) : "—";
-    hh.className = "hours" + (h ? "" : " zero");
+    const d = addDays(weekStart, i);
+    boxes[i].querySelector(".day-head").innerHTML = headHTML(i, d, recOf(iso(d)));
   }
-  $("totHours").textContent = "Totaal uren: " + nl(totalH);
-  $("totPay").textContent = "€ " + nl(totalH * state.rate);
+  updateTotals();
 }
 
 /* ---------- navigatie ---------- */
@@ -403,6 +434,28 @@ $("copy").addEventListener("click", async () => {
   const json = buildExport();
   try { await navigator.clipboard.writeText(json); markExported(); toast("Gekopieerd. Plak het in een mail of bericht aan jezelf."); }
   catch (e) { toast("Kopiëren lukt hier niet. Gebruik de deelknop."); }
+});
+
+/* ---------- herstellen van pc-snapshot ---------- */
+$("restore").addEventListener("click", () => $("restoreFile").click());
+$("restoreFile").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try {
+    flush();
+    const d = JSON.parse(await f.text());
+    if (d.format !== "werkuren-pc" || typeof d.records !== "object") throw 0;
+    const keys = Object.keys(d.records).filter(k => !state.records[k] && !state.deleted[k]);
+    if (!confirm(keys.length + " dag(en) van de pc terugzetten? Dagen die al op de telefoon staan blijven ongewijzigd.")) return;
+    keys.forEach(k => {
+      const r = d.records[k];
+      state.records[k] = { start: r.start || "", end: r.end || "", clients: r.clients || [], purchases: r.purchases || [],
+        clients_text: r.clients_text ?? (r.clients || []).map(c => c.name || c).join("\n"),
+        purchases_text: r.purchases_text ?? (r.purchases || []).map(p => (p.store + " " + String(p.amount).replace(".", ",")).trim()).join("\n"),
+        updated: d.written || new Date().toISOString() };
+    });
+    if (typeof d.rate === "number") state.rate = d.rate;
+    saveState(); render(); toast(keys.length + " dag(en) hersteld.");
+  } catch (err) { toast("Dit is geen geldig pc-bestand."); }
 });
 
 /* ---------- toast + start ---------- */
