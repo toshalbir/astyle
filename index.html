@@ -299,8 +299,8 @@ function buildEditor(key, rec) {
 
   ed.innerHTML =
     '<div class="row2">' +
-      '<div><label for="f-start">Beginuur</label><input id="f-start" inputmode="numeric" autocomplete="off" placeholder="8 of 8:30"></div>' +
-      '<div><label for="f-end">Einduur</label><input id="f-end" inputmode="numeric" autocomplete="off" placeholder="17 of 17:30"></div>' +
+      '<div><label for="f-start">Beginuur</label><input id="f-start" inputmode="decimal" autocomplete="off" placeholder="bv. 830"></div>' +
+      '<div><label for="f-end">Einduur</label><input id="f-end" inputmode="decimal" autocomplete="off" placeholder="bv. 1730"></div>' +
     '</div>' +
     '<div class="err" id="f-err"></div>' +
     '<label for="f-clients">Klanten (één naam per regel)</label>' +
@@ -320,6 +320,7 @@ function buildEditor(key, rec) {
 
   ["start", "end", "clients", "purch"].forEach(k => editorRefs[k].addEventListener("input", schedule));
   ["input", "focus"].forEach(ev => editorRefs.clients.addEventListener(ev, renderChips));
+  ["start", "end"].forEach(k => editorRefs[k].addEventListener("change", () => { editorRefs[k].value = normTime(editorRefs[k].value); schedule(); }));
   renderChips();
   q("#f-clear").addEventListener("click", () => {
     const key = editorRefs.key, prevTomb = state.deleted[key];
@@ -359,11 +360,17 @@ function schedule() {
   saveTimer = setTimeout(() => flush(true), 500);
 }
 
+/* 830 / 8,30 / 8.30 worden 8:30 (het iOS-toetsenbord heeft geen dubbele punt) */
+function normTime(v) {
+  v = v.trim().replace(/[,.]/, ":");
+  if (/^\d{3,4}$/.test(v)) v = v.slice(0, -2) + ":" + v.slice(-2);
+  return v;
+}
 function flush(rerenderHeader, forceDeleteMark) {
   clearTimeout(saveTimer); saveTimer = null;
   const r = editorRefs;
   if (!r || !document.body.contains(r.start)) return;
-  const start = r.start.value.trim(), end = r.end.value.trim();
+  const start = normTime(r.start.value), end = normTime(r.end.value);
   const clientsText = r.clients.value, purchText = r.purch.value;
 
   let msg = "";
