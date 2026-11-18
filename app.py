@@ -854,6 +854,17 @@ class WorkHoursApp:
                 messagebox.showerror("Synchroniseren", f"De map kon niet worden gelezen:\n{exc}")
             return
 
+        last_exp = settings.get("last_exported", "")
+        stale = {id(c) for c in candidates if c[0] and c[0] <= last_exp}
+        if stale:                                        # kwam later aan dan een nieuwere export: negeren
+            for c in candidates:
+                if id(c) in stale:
+                    imported[c[2][0]] = True
+                    imported[c[2][1]] = True
+            candidates = [c for c in candidates if id(c) not in stale]
+            settings["imported"] = dict(list(imported.items())[-200:])
+            self._save_settings(settings)
+
         if not candidates:
             if not auto:
                 messagebox.showinfo("Synchroniseren", "Geen nieuw bestand van de telefoon gevonden.")
@@ -868,6 +879,7 @@ class WorkHoursApp:
             imported[c[2][0]] = True
             imported[c[2][1]] = True
         settings["imported"] = dict(list(imported.items())[-200:])
+        settings["last_exported"] = max(last_exp, newest[0])
         settings["last_import"] = {"at": datetime.now().isoformat(timespec="seconds"), "file": newest[3].name,
                                    "days": result[0] + result[1] + result[3], "sent": newest[0],
                                    "arrived": datetime.fromtimestamp(newest[5]).isoformat(timespec="seconds")}
@@ -984,7 +996,7 @@ class WorkHoursApp:
             messagebox.showerror("Importeren", f"Het bestand kon niet worden gelezen:\n{exc}")
             return
         settings = self._load_settings()
-        result = self._apply_import(data, settings)
+        result = self._apply_import(data, settings, force=True)   # handmatig: altijd alles aanbieden
         if result is None:
             return
         self._save_settings(settings)
@@ -1006,7 +1018,7 @@ class WorkHoursApp:
         if not auto:
             messagebox.showinfo("Importeren", text)
 
-    def _apply_import(self, data, settings):
+    def _apply_import(self, data, settings, force=False):
         """Voeg de dagen uit een telefoonbestand samen met de pc-gegevens.
 
         Geeft (nieuw, overschreven, behouden) terug, of None als de gebruiker annuleert.
@@ -1057,10 +1069,13 @@ class WorkHoursApp:
             rec = clean(rec)
             current = self.records.get(key)
             if current is None:
-                new_days.append((key, rec))
+                if not force and upd and seen.get(key) == upd:
+                    pass                                 # op de pc gewist en op de telefoon niet gewijzigd
+                else:
+                    new_days.append((key, rec))
             elif same(clean(current), rec):
                 pass
-            elif upd and seen.get(key) == upd:
+            elif not force and upd and seen.get(key) == upd:
                 pass                                     # telefoon ongewijzigd, pc-versie is nieuwer
             else:
                 conflicts.append((key, rec))
