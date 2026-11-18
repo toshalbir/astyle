@@ -309,11 +309,13 @@ class WorkHoursApp:
         actions.pack(fill="x", pady=(12, 0))
         ttk.Button(actions, text="🖨  Afdrukken", style="Primary.TButton", command=self._print_week).pack(side="left")
         ttk.Button(actions, text="🗑  Week wissen", style="Danger.TButton", command=self._clear_week).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="🔄  Synchroniseer met telefoon", command=lambda: self._sync_now()).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="📁  Synchronisatiemap", command=self._pick_sync_folder).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="📱  Bestand importeren", command=self._import_phone).pack(side="left", padx=(8, 0))
-        ttk.Button(actions, text="🔗  Koppelcode", command=self._show_pair_code).pack(side="left", padx=(8, 0))
         ttk.Label(actions, text="Gegevens worden automatisch lokaal opgeslagen.", foreground="#64748b").pack(side="right")
+        actions2 = ttk.Frame(main)                       # tweede rij, zodat geen knop buiten beeld valt
+        actions2.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions2, text="🔗  Koppelcode", command=self._show_pair_code).pack(side="left")
+        ttk.Button(actions2, text="🔄  Synchroniseer met telefoon", command=lambda: self._sync_now()).pack(side="left", padx=(8, 0))
+        ttk.Button(actions2, text="📁  Synchronisatiemap", command=self._pick_sync_folder).pack(side="left", padx=(8, 0))
+        ttk.Button(actions2, text="📱  Bestand importeren", command=self._import_phone).pack(side="left", padx=(8, 0))
 
         self.status = ttk.Label(main, text="", foreground="#64748b")
         self.status.pack(anchor="w", pady=(8, 0))
