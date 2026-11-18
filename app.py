@@ -9,6 +9,14 @@ import os
 import re
 import sys
 import time
+import hmac
+import hashlib
+import secrets
+import gzip
+import base64
+import queue
+import threading
+import urllib.request
 import calendar
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -73,6 +81,35 @@ def hours_between(start, end):
         minutes += 24 * 60
     return minutes / 60
 
+NTFY_URL = "https://ntfy.sh/"
+CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def ntfy_keys(code):
+    """Leid topic en sleutels af uit de koppelcode (zelfde afleiding als in de telefoon-app)."""
+    sec = code.encode("utf-8")
+    h = lambda label: hmac.new(sec, label, hashlib.sha256).digest()
+    return "wu-" + h(b"topic")[:16].hex(), h(b"enc"), h(b"mac")
+
+
+def ntfy_open(blob_b64, k_enc, k_mac):
+    """Controleer (HMAC) en ontcijfer een bericht van de telefoon; geeft het JSON-object terug."""
+    raw = base64.b64decode(blob_b64)
+    if len(raw) < 49:
+        raise ValueError("te kort")
+    nonce, tag, ct = raw[:16], raw[16:48], raw[48:]
+    if not hmac.compare_digest(tag, hmac.new(k_mac, nonce + ct, hashlib.sha256).digest()):
+        raise ValueError("ongeldige handtekening")
+    out = bytearray()
+    for i in range((len(ct) + 31) // 32):
+        ks = hmac.new(k_enc, nonce + i.to_bytes(4, "big"), hashlib.sha256).digest()
+        out += bytes(a ^ b for a, b in zip(ct[i * 32:(i + 1) * 32], ks))
+    out = bytes(out)
+    if out[:2] == b"\x1f\x8b":
+        out = gzip.decompress(out)
+    return json.loads(out.decode("utf-8"))
+
+
 class WorkHoursApp:
     def __init__(self, root):
         self.root = root
@@ -104,6 +141,14 @@ class WorkHoursApp:
         self.root.after(700, lambda: self._sync_now(auto=True))
         self.root.after(900, self._update_sync_label)
         self.root.bind("<FocusIn>", self._on_focus)
+        self._ntfy_q = queue.Queue()
+        self._ntfy_gen = 0
+        self._ntfy_ids = set()
+        self._ntfy_parts = {}
+        self._ntfy_status = ""
+        self._ntfy_status_shown = None
+        self.root.after(1200, self._ntfy_start)
+        self.root.after(1500, self._ntfy_pump)
         self.root.after(CHECK_EVERY_MS, self._tick)
 
     def _style(self):
@@ -267,6 +312,7 @@ class WorkHoursApp:
         ttk.Button(actions, text="🔄  Synchroniseer met telefoon", command=lambda: self._sync_now()).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="📁  Synchronisatiemap", command=self._pick_sync_folder).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="📱  Bestand importeren", command=self._import_phone).pack(side="left", padx=(8, 0))
+        ttk.Button(actions, text="🔗  Koppelcode", command=self._show_pair_code).pack(side="left", padx=(8, 0))
         ttk.Label(actions, text="Gegevens worden automatisch lokaal opgeslagen.", foreground="#64748b").pack(side="right")
 
         self.status = ttk.Label(main, text="", foreground="#64748b")
@@ -936,11 +982,13 @@ class WorkHoursApp:
                         except Exception:
                             return "?"
                     text = (f"Laatste import: {at:%d-%m %H:%M:%S} ({li.get('days', 0)} dag(en))  •  "
-                            f"verstuurd {hms(li.get('sent'))}  •  in map {hms(li.get('arrived'))}")
+                            f"verstuurd {hms(li.get('sent'))}  •  {'ontvangen' if li.get('via') == 'ntfy' else 'in map'} {hms(li.get('arrived'))}")
                 if st.get("last_check"):
                     text += f"  •  laatst gecontroleerd {datetime.fromisoformat(st['last_check']):%H:%M}"
             except Exception:
                 pass
+            if st.get("ntfy_code"):
+                text += f"  •  live: {self._ntfy_status or 'starten…'}"
         self.sync_label.configure(text=text)
 
     def _write_snapshot(self, folder):
@@ -981,6 +1029,147 @@ class WorkHoursApp:
                 (backup_dir / f"HERSTELINSTRUCTIES_{stamp}.txt").unlink(missing_ok=True)
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # Live synchronisatie via ntfy (versleuteld met de koppelcode)
+    # ------------------------------------------------------------------
+    def _new_code(self):
+        return "".join(secrets.choice(CODE_ALPHABET) for _ in range(24))
+
+    def _show_pair_code(self):
+        st = self._load_settings()
+        if not st.get("ntfy_code"):
+            st["ntfy_code"] = self._new_code()
+            self._save_settings(st)
+            self._ntfy_start()
+        pretty = "-".join(st["ntfy_code"][i:i + 4] for i in range(0, 24, 4))
+        win = tk.Toplevel(self.root)
+        win.title("Koppelcode")
+        win.transient(self.root)
+        ttk.Label(win, text="Typ deze code één keer in de telefoon-app (onderaan, bij Koppel):").pack(padx=16, pady=(14, 6))
+        ent = ttk.Entry(win, width=34, font=("Consolas", 14))
+        ent.insert(0, pretty)
+        ent.configure(state="readonly")
+        ent.pack(padx=16)
+
+        def copy():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(pretty)
+
+        def renew():
+            if messagebox.askyesno("Koppelcode", "Nieuwe code maken? De telefoon moet dan opnieuw worden gekoppeld."):
+                s2 = self._load_settings()
+                s2["ntfy_code"] = self._new_code()
+                self._save_settings(s2)
+                self._ntfy_start()
+                win.destroy()
+                self._show_pair_code()
+
+        row = ttk.Frame(win)
+        row.pack(pady=12)
+        ttk.Button(row, text="Kopieer", command=copy).pack(side="left", padx=4)
+        ttk.Button(row, text="Nieuwe code", command=renew).pack(side="left", padx=4)
+        ttk.Button(row, text="Sluiten", command=win.destroy).pack(side="left", padx=4)
+
+    def _ntfy_start(self):
+        self._ntfy_gen += 1
+        code = self._load_settings().get("ntfy_code")
+        if not code:
+            self._ntfy_status = ""
+            return
+        threading.Thread(target=self._ntfy_worker, args=(self._ntfy_gen, ntfy_keys(code)[0]), daemon=True).start()
+
+    def _ntfy_worker(self, gen, topic):
+        """Achtergrondthread: houdt een verbinding met ntfy open en zet berichten in een wachtrij."""
+        delay = 3
+        while gen == self._ntfy_gen:
+            try:
+                req = urllib.request.Request(f"{NTFY_URL}{topic}/json?since=all", headers={"User-Agent": "werkuren"})
+                with urllib.request.urlopen(req, timeout=100) as resp:
+                    self._ntfy_status = "verbonden"
+                    delay = 3
+                    for line in resp:
+                        if gen != self._ntfy_gen:
+                            return
+                        ev = json.loads(line)
+                        if ev.get("event") == "message":
+                            self._ntfy_q.put(ev)
+            except Exception:
+                pass
+            if gen != self._ntfy_gen:
+                return
+            self._ntfy_status = "verbinding verbroken, opnieuw proberen"
+            time.sleep(delay)
+            delay = min(delay * 2, 60)
+
+    def _ntfy_pump(self):
+        try:
+            if not getattr(self, "_syncing", False):
+                while True:
+                    try:
+                        ev = self._ntfy_q.get_nowait()
+                    except queue.Empty:
+                        break
+                    self._ntfy_handle(ev)
+            if self._ntfy_status != self._ntfy_status_shown:
+                self._ntfy_status_shown = self._ntfy_status
+                self._update_sync_label()
+        finally:
+            self.root.after(1000, self._ntfy_pump)
+
+    def _ntfy_handle(self, ev):
+        mid = ev.get("id")
+        if not mid or mid in self._ntfy_ids:
+            return
+        self._ntfy_ids.add(mid)
+        try:
+            m = json.loads(ev.get("message", ""))
+            i, k, n, d = m["i"], m["k"], m["n"], m["d"]
+            if not (isinstance(i, str) and isinstance(k, int) and isinstance(n, int) and isinstance(d, str) and 0 <= k < n <= 40):
+                return
+        except Exception:
+            return
+        now = time.time()
+        for key in [x for x, v in self._ntfy_parts.items() if now - v["t"] > 86400]:
+            del self._ntfy_parts[key]
+        entry = self._ntfy_parts.setdefault(i, {"t": now, "p": {}})
+        entry["p"][k] = d
+        if len(entry["p"]) == n:
+            del self._ntfy_parts[i]
+            self._ntfy_apply("".join(entry["p"][x] for x in range(n)), ev.get("time", now))
+
+    def _ntfy_apply(self, blob, recv):
+        st = self._load_settings()
+        code = st.get("ntfy_code")
+        if not code:
+            return
+        _, k_enc, k_mac = ntfy_keys(code)
+        try:
+            data = ntfy_open(blob, k_enc, k_mac)
+        except Exception:
+            return                                       # niet van onze telefoon of beschadigd: negeren
+        if not isinstance(data, dict) or data.get("format") != "werkuren-telefoon" or not isinstance(data.get("records"), dict):
+            return
+        exported = str(data.get("exported", ""))
+        if exported and exported <= st.get("last_exported", ""):
+            return                                       # ouder dan wat al is verwerkt
+        self._syncing = True
+        try:
+            self._autosave_day(refresh=False)
+            result = self._apply_import(data, st)
+            if result is None:
+                return
+            st["last_exported"] = max(st.get("last_exported", ""), exported)
+            st["last_import"] = {"at": datetime.now().isoformat(timespec="seconds"), "file": "ntfy", "via": "ntfy",
+                                 "days": result[0] + result[1] + result[3], "sent": exported,
+                                 "arrived": datetime.fromtimestamp(float(recv)).isoformat(timespec="seconds")}
+            self._save_settings(st)
+            self._report_import(result, "live", True)
+            if st.get("sync_folder"):
+                self._write_snapshot(st["sync_folder"])
+            self._update_sync_label()
+        finally:
+            self._syncing = False
 
     def _import_phone(self):
         """Handmatig één bestand van de telefoon importeren."""
@@ -1106,7 +1295,9 @@ class WorkHoursApp:
         if new_days or (conflicts and overwrite) or (deletions and remove):
             # Veiligheidskopie vóór het wijzigen (zelfde back-up als bij afdrukken).
             try:
-                self._create_backup()
+                if time.time() - getattr(self, "_last_backup_t", 0) > 6 * 3600:
+                    self._create_backup()
+                    self._last_backup_t = time.time()
             except Exception:
                 if not messagebox.askyesno("Importeren", "De back-up kon niet worden gemaakt. Toch doorgaan met importeren?"):
                     return None
