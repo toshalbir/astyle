@@ -597,7 +597,8 @@ function setPairStatus(t) {
 }
 $("pairBtn").addEventListener("click", () => {
   const c = $("pairCode").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-  if (c.length < 20) { toast("Code te kort."); return; }
+  if (c.length !== 24) { toast("Code heeft " + c.length + " tekens, het moeten er 24 zijn."); return; }
+  if (!/^[A-HJKMNP-Z2-9]{24}$/.test(c)) { toast("De code bevat een ongeldig teken (geen 0, 1, O, I of L)."); return; }
   state.pair = c; state.dirty = true; saveState(); $("pairCode").value = ""; setPairStatus(); trySend(true);
 });
 $("unpair").addEventListener("click", () => {
