@@ -137,6 +137,11 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
     <div class="btns"><button id="restore">Herstel van pc&hellip;</button></div>
     <input type="file" id="restoreFile" accept=".json,application/json" hidden>
   </div>
+<div class="card sync">
+    <div class="btns" id="pairRow"><input id="pairCode" placeholder="Koppelcode van de pc" autocapitalize="characters" autocomplete="off" spellcheck="false"><button id="pairBtn" class="primary">Koppel</button></div>
+    <p id="pairStatus" style="margin:6px 0 0"></p>
+    <button class="link" id="unpair" style="display:none">Ontkoppelen</button>
+  </div>
 </main>
 <div class="toast" id="toast"></div>
 
@@ -154,6 +159,7 @@ function loadState() {
       const p = JSON.parse(raw);
       state.records = p.records || {};
       state.deleted = p.deleted || {};
+      state.pair = p.pair || ""; state.dirty = !!p.dirty; state.lastSent = p.lastSent || null;
       state.rate = typeof p.rate === "number" ? p.rate : 13;
       state.lastExport = p.lastExport || null;
     }
@@ -335,7 +341,7 @@ function buildEditor(key, rec) {
     toast("Dag leeggemaakt.", "Ongedaan maken", () => {
       if (prev) { prev.updated = new Date().toISOString(); state.records[key] = prev; delete state.deleted[key]; }
       else if (prevTomb) state.deleted[key] = prevTomb; else delete state.deleted[key];
-      saveState(); render();
+      markDirty(); saveState(); render();
     }, 9000);
   });
   return ed;
@@ -412,7 +418,7 @@ function flush(rerenderHeader, forceDeleteMark) {
   const isEmpty = !start && !end && !clientsText.trim() && !purchText.trim();
   if (isEmpty) {
     // Alleen een verwijdermarkering als de dag op de telefoon bestond of expliciet is leeggemaakt.
-    if (old || forceDeleteMark) { delete state.records[r.key]; state.deleted[r.key] = new Date().toISOString(); }
+    if (old || forceDeleteMark) { delete state.records[r.key]; state.deleted[r.key] = new Date().toISOString(); markDirty(); }
   } else {
     const unchanged = old && old.start === start && old.end === end &&
       (old.clients_text || "").trimEnd() === clientsText.trimEnd() && (old.purchases_text || "").trimEnd() === purchText.trimEnd();
@@ -423,7 +429,7 @@ function flush(rerenderHeader, forceDeleteMark) {
         clients_text: clientsText, purchases_text: purchText,
         updated: new Date().toISOString()
       };
-      delete state.deleted[r.key];
+      delete state.deleted[r.key]; markDirty();
     }
   }
   if (saveState()) r.saved.textContent = "Automatisch bewaard";
@@ -521,6 +527,86 @@ $("restoreFile").addEventListener("change", async e => {
   } catch (err) { toast("Dit is geen geldig pc-bestand."); }
 });
 
+/* ---------- live synchronisatie via ntfy (versleuteld) ---------- */
+const NTFY = "https://ntfy.sh/", WINDOW_DAYS = 28, CHUNK = 3000;
+/*CRYPTO-START*/
+const enc = new TextEncoder();
+const b64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 8192) s += String.fromCharCode.apply(null, u8.subarray(i, i + 8192)); return btoa(s); };
+const cat = (...a) => { const o = new Uint8Array(a.reduce((n, x) => n + x.length, 0)); let p = 0; a.forEach(x => { o.set(x, p); p += x.length; }); return o; };
+async function hmac(key, data) {
+  const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", k, data));
+}
+async function derive(code) {
+  const sec = enc.encode(code), t = await hmac(sec, enc.encode("topic"));
+  return { topic: "wu-" + Array.from(t.slice(0, 16), x => x.toString(16).padStart(2, "0")).join(""),
+           kEnc: await hmac(sec, enc.encode("enc")), kMac: await hmac(sec, enc.encode("mac")) };
+}
+async function seal(kEnc, kMac, plain) {
+  const nonce = crypto.getRandomValues(new Uint8Array(16)), ct = new Uint8Array(plain.length);
+  for (let i = 0; i * 32 < plain.length; i++) {
+    const ks = await hmac(kEnc, cat(nonce, new Uint8Array([i >>> 24, (i >>> 16) & 255, (i >>> 8) & 255, i & 255])));
+    for (let j = 0; j < 32 && i * 32 + j < plain.length; j++) ct[i * 32 + j] = plain[i * 32 + j] ^ ks[j];
+  }
+  return cat(nonce, await hmac(kMac, cat(nonce, ct)), ct);
+}
+async function gzip(str) {
+  return new Uint8Array(await new Response(new Blob([str]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer());
+}
+async function pack(json, code) {
+  const { topic, kEnc, kMac } = await derive(code);
+  let raw = enc.encode(json); try { raw = await gzip(json); } catch (e) {}
+  const blob = b64(await seal(kEnc, kMac, raw)), id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
+  const n = Math.ceil(blob.length / CHUNK), msgs = [];
+  for (let k = 0; k < n; k++) msgs.push(JSON.stringify({ i: id, k: k, n: n, d: blob.slice(k * CHUNK, (k + 1) * CHUNK) }));
+  return { topic, msgs };
+}
+/*CRYPTO-END*/
+function buildWindow() {
+  const lim = new Date(); lim.setDate(lim.getDate() - WINDOW_DAYS);
+  const limK = iso(lim), limT = lim.toISOString(), recs = {}, del = {};
+  for (const k in state.records) if (k >= limK || (state.records[k].updated || "") >= limT) recs[k] = state.records[k];
+  for (const k in state.deleted) if (k >= limK || state.deleted[k] >= limT) del[k] = state.deleted[k];
+  return JSON.stringify({ format: "werkuren-telefoon", version: 1, exported: new Date().toISOString(), records: recs, deleted: del });
+}
+let sending = false, sendTimer = null, rev = 0;
+function markDirty() {
+  if (!state.pair) return;
+  rev++; state.dirty = true; saveState();
+  clearTimeout(sendTimer); sendTimer = setTimeout(() => trySend(), 4000); setPairStatus();
+}
+async function trySend(force) {
+  if (!state.pair || sending || (!state.dirty && !force)) return;
+  flush(); const r0 = rev; sending = true; setPairStatus("Verzenden…");
+  try {
+    const { topic, msgs } = await pack(buildWindow(), state.pair);
+    for (const m of msgs) { const r = await fetch(NTFY + topic, { method: "POST", body: m }); if (!r.ok) throw new Error("HTTP " + r.status); }
+    if (rev === r0) state.dirty = false;
+    state.lastSent = new Date().toISOString(); saveState();
+  } catch (e) { state.dirty = true; saveState(); }
+  sending = false; setPairStatus();
+}
+function maybeSend() {
+  if (state.pair && (state.dirty || !state.lastSent || Date.now() - Date.parse(state.lastSent) > 600000)) trySend(true);
+}
+function setPairStatus(t) {
+  $("pairRow").style.display = state.pair ? "none" : "flex";
+  $("unpair").style.display = state.pair ? "" : "none";
+  $("pairStatus").textContent = !state.pair ? "" : t || (state.dirty ? "Wacht op verzending…"
+    : state.lastSent ? "Verzonden " + new Date(state.lastSent).toLocaleTimeString("nl-BE") : "Gekoppeld");
+}
+$("pairBtn").addEventListener("click", () => {
+  const c = $("pairCode").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (c.length < 20) { toast("Code te kort."); return; }
+  state.pair = c; state.dirty = true; saveState(); $("pairCode").value = ""; setPairStatus(); trySend(true);
+});
+$("unpair").addEventListener("click", () => {
+  if (confirm("Ontkoppelen?")) { state.pair = ""; saveState(); setPairStatus(); }
+});
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") maybeSend(); });
+window.addEventListener("online", () => trySend());
+setInterval(() => { if (state.dirty) trySend(); }, 60000);
+
 /* ---------- toast + start ---------- */
 let toastTimer;
 function toast(t, label, fn, ms) {
@@ -540,6 +626,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
 
 loadState();
 render();
+setPairStatus();
+maybeSend();
 </script>
 </body>
 </html>
