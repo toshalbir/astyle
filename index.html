@@ -6,11 +6,11 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Werkuren">
+<meta name="apple-mobile-web-app-title" content="Werkuren test">
 <meta name="theme-color" content="#17365d">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
-<title>Werkuren</title>
+<title>Werkuren test</title>
 <style>
   :root {
     --navy: #17365d; --navy-2: #dbeafe; --green: #176b45; --bg: #f1f5f9; --card: #ffffff;
@@ -93,11 +93,17 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
 .chips button.fx{background:var(--navy);color:#fff;border-color:var(--navy)}
 .chips button.rc{border-color:var(--green);color:var(--green)}
 @media (prefers-color-scheme:dark){.chips button.fx{background:#2c5a94;border-color:#2c5a94}}
+.day.appendix{margin-left:22px;border-style:dashed}
+.day.appendix .name::before{content:"\21B3  ";color:var(--muted);font-weight:400}
+.cash{background:var(--bg);border-radius:10px;padding:12px 14px;margin-top:12px;line-height:1.45}
+.cash .main{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:16px;font-weight:700}
+.cash .main b{color:var(--green);font-size:21px}
+.cash .sub{font-size:13px;color:var(--muted);margin-top:3px}
 </style>
 </head>
 <body>
 <header>
-  <img src="icon-192.png" alt="" class="logo"><h1>Werkuren</h1>
+  <img src="icon-192.png" alt="" class="logo"><h1>Werkuren test</h1>
 </header>
 <main>
 
@@ -117,6 +123,7 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
       <div class="big" id="totHours">Totaal uren: 0,00</div>
       <div class="big pay" id="totPay"></div>
     </div>
+    <div id="totCash" class="cash" hidden></div>
     <div id="totMonth" style="margin-top:8px;font-weight:600"></div>
     <div class="hint" id="totBuy"></div>
     <div class="rate-row">
@@ -148,11 +155,28 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
 
 <script>
 "use strict";
-const STORE_KEY = "werkuren.v1";
-const DAY_NAMES = ["Maandag","Dinsdag","Woensdag","Donderdag","Vrijdag","Zaterdag"];
+const STORE_KEY = "werkuren-test.v1";   // eigen opslag: raakt de gewone Werkuren-app niet aan
+const DAY_NAMES = ["Maandag","Dinsdag","Woensdag","Donderdag","Vrijdag","Zaterdag","Zondag"];   // zondag = bijlage bij zaterdag
 
 /* ---------- opslag ---------- */
-let state = { records: {}, deleted: {}, rate: 13, lastExport: null };
+let state = { records: {}, deleted: {}, rate: 13, lastExport: null, deposits: {}, corrections: {} };
+/* Storting per maand en afstemmingen komen van de pc (die is de baas); de telefoon rekent er alleen mee. */
+function cleanDeposits(raw) {
+  const out = {};
+  if (raw && typeof raw === "object") Object.keys(raw).sort().forEach(k => {
+    const v = +raw[k];
+    if (/^\d{4}-(0[1-9]|1[0-2])$/.test(k) && isFinite(v) && v >= 0) out[k] = v;
+  });
+  return out;
+}
+function cleanCorrections(raw) {
+  const out = {};
+  if (raw && typeof raw === "object") Object.keys(raw).sort().forEach(k => {
+    const v = +raw[k];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(k) && isFinite(v) && Math.abs(v) <= 1e6) out[k] = Number(v.toFixed(2));
+  });
+  return out;
+}
 function loadState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -160,6 +184,7 @@ function loadState() {
       const p = JSON.parse(raw);
       state.records = p.records || {};
       state.deleted = p.deleted || {};
+      state.deposits = cleanDeposits(p.deposits); state.corrections = cleanCorrections(p.corrections);
       state.pair = p.pair || ""; state.fp = p.fp || ""; state.lastPc = p.lastPc || ""; state.dirty = !!p.dirty; state.lastSent = p.lastSent || null;
       state.rate = typeof p.rate === "number" ? p.rate : 13;
       state.lastExport = p.lastExport || null;
@@ -234,14 +259,61 @@ let weekStart = mondayOf(new Date());
 let selected = iso(new Date());
 if (!isInWeek(selected)) selected = iso(weekStart);
 function isInWeek(key) {
-  for (let i = 0; i < 6; i++) if (iso(addDays(weekStart, i)) === key) return true;
+  for (let i = 0; i < 7; i++) if (iso(addDays(weekStart, i)) === key) return true;
   return false;
 }
 
 const $ = id => document.getElementById(id);
 function recOf(key) { return state.records[key] || { start: "", end: "", clients: [], purchases: [] }; }
 
-const eur = n => "€ " + nl(n);
+const eur = n => { const [a, b] = n.toFixed(2).split("."); return "€ " + a.replace(/\B(?=(\d{3})+(?!\d))/g, ".") + "," + b; };
+
+/* ---------- storting en cash: zelfde berekening als de pc-app ---------- */
+const MONTHS_NL = ["januari","februari","maart","april","mei","juni","juli","augustus","september","oktober","november","december"];
+const monthStart = (y, m) => new Date(y, m - 1, 1);
+function depositFor(y, m) {                       // eigen waarde van die maand, anders de laatste eerdere, anders 0
+  const k = y + "-" + pad(m), dep = state.deposits || {};
+  if (k in dep) return dep[k];
+  let best = null;
+  for (const x in dep) if (x < k && (best === null || x > best)) best = x;
+  return best === null ? 0 : dep[best];
+}
+function dayHours(key) { const r = state.records[key]; return r ? hoursBetween(r.start, r.end) : 0; }
+function monthEarned(y, m, upto) {                // verdiend uit uren in die maand, t/m 'upto' (Date) of de hele maand
+  let last = new Date(y, m, 0).getDate();
+  if (upto) {
+    if (upto < monthStart(y, m)) return 0;
+    if (upto.getFullYear() === y && upto.getMonth() + 1 === m) last = upto.getDate();
+  }
+  let h = 0;
+  for (let d = 1; d <= last; d++) h += dayHours(y + "-" + pad(m) + "-" + pad(d));
+  return h * state.rate;
+}
+function corrTotal(y, m, upto) {                  // afstemmingen van de pc in die maand, t/m 'upto'
+  const pre = y + "-" + pad(m) + "-", lim = upto ? iso(upto) : "9999-99-99";
+  let t = 0;
+  for (const k in state.corrections) if (k.startsWith(pre) && k <= lim) t += state.corrections[k];
+  return t;
+}
+const hasCorr = (y, m) => Object.keys(state.corrections).some(k => k.startsWith(y + "-" + pad(m) + "-"));
+function cashDueMonth(y, m, upto) {
+  if (upto && upto < monthStart(y, m)) return 0;
+  return Math.max(0, monthEarned(y, m, upto) + corrTotal(y, m, upto) - depositFor(y, m));
+}
+function monthsIn(a, b) {
+  const out = [];
+  for (let d = new Date(a); d <= b; d = addDays(d, 1)) {
+    const y = d.getFullYear(), m = d.getMonth() + 1;
+    if (!out.some(x => x[0] === y && x[1] === m)) out.push([y, m]);
+  }
+  return out;
+}
+function weekCash(a, b) {                         // cash voor de uren van a t/m b: toename van (verdiend - storting)
+  let t = 0;
+  monthsIn(a, b).forEach(([y, m]) => { t += cashDueMonth(y, m, b) - cashDueMonth(y, m, addDays(a, -1)); });
+  return Number(t.toFixed(2));
+}
+const hasCashEffect = (y, m) => depositFor(y, m) > 0 || hasCorr(y, m);
 const esc = t => String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function headHTML(i, d, rec) {
   const h = hoursBetween(rec.start, rec.end);
@@ -254,7 +326,7 @@ function headHTML(i, d, rec) {
 }
 function updateTotals() {
   let h = 0, p = 0;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     const rec = recOf(iso(addDays(weekStart, i)));
     h += hoursBetween(rec.start, rec.end);
     (rec.purchases || []).forEach(x => { p += +x.amount || 0; });
@@ -262,6 +334,16 @@ function updateTotals() {
   $("totHours").textContent = "Totaal uren: " + nl(h);
   $("totPay").textContent = "Week: " + eur(h * state.rate);
   $("totBuy").textContent = p ? "Aankopen deze week: " + eur(p) : "";
+  const we = addDays(weekStart, 6), cashMonths = monthsIn(weekStart, we).filter(([y, m]) => hasCashEffect(y, m)), box = $("totCash");
+  if (!cashMonths.length) box.hidden = true;
+  else {
+    const cashH = weekCash(weekStart, we);
+    const parts = cashMonths.map(([y, m]) => { const c = corrTotal(y, m, we);
+      return MONTHS_NL[m - 1] + ": verdiend " + eur(monthEarned(y, m, we)) + (c ? (c > 0 ? " + " : " − ") + "correctie " + eur(Math.abs(c)) : "") + " − gestort " + eur(depositFor(y, m)); });
+    box.hidden = false;
+    box.innerHTML = '<div class="main"><span>Te ontvangen deze week</span><b>' + eur(cashH + p) + '</b></div>' +
+      '<div class="sub">uren ' + eur(cashH) + ' + aankopen ' + eur(p) + '</div>' + parts.map(t => '<div class="sub">' + esc(t) + '</div>').join("");
+  }
   const ref = selected && isInWeek(selected) ? selected : iso(weekStart), pre = ref.slice(0, 7);
   let mh = 0, mp = 0, md = 0;
   for (const k in state.records) if (k.startsWith(pre)) {
@@ -270,16 +352,18 @@ function updateTotals() {
     (r.purchases || []).forEach(y => { mp += +y.amount || 0; });
   }
   const mn = new Date(+pre.slice(0, 4), +pre.slice(5, 7) - 1, 1).toLocaleString("nl-BE", { month: "long", year: "numeric" });
-  $("totMonth").innerHTML = "<b>" + mn + "</b><br>" + nl(mh) + " uur &middot; " + eur(mh * state.rate) + "<br>" + md + " dagen" + (mp ? " &middot; aankopen " + eur(mp) : "");
+  const py = +pre.slice(0, 4), pm = +pre.slice(5, 7);
+  $("totMonth").innerHTML = "<b>" + mn + "</b><br>" + nl(mh) + " uur &middot; " + eur(mh * state.rate) + "<br>" + md + " dagen" + (mp ? " &middot; aankopen " + eur(mp) : "") +
+    (hasCashEffect(py, pm) ? "<br>gestort " + eur(depositFor(py, pm)) + " &middot; cash te ontvangen " + eur(cashDueMonth(py, pm)) : "");
 }
 function render() {
-  $("weekLabel").textContent = fmt(weekStart) + "  t/m  " + fmt(addDays(weekStart, 5));
+  $("weekLabel").textContent = fmt(weekStart) + "  t/m  " + fmt(addDays(weekStart, 6));
   const wrap = $("days"); wrap.innerHTML = "";
   const todayKey = iso(new Date());
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     const d = addDays(weekStart, i), key = iso(d), rec = recOf(key), open = key === selected;
     const box = document.createElement("div");
-    box.className = "day" + (open ? " open" : "") + (key === todayKey ? " today" : "");
+    box.className = "day" + (open ? " open" : "") + (key === todayKey ? " today" : "") + (i === 6 ? " appendix" : "");
     const head = document.createElement("button");
     head.className = "day-head"; head.innerHTML = headHTML(i, d, rec);
     head.addEventListener("click", () => { flush(); selected = open ? null : key; render(); });
@@ -297,6 +381,7 @@ let saveTimer = null, editorRefs = null;
 function buildEditor(key, rec) {
   const ed = document.createElement("div");
   ed.className = "editor";
+  const isSun = new Date(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.slice(8, 10)).getDay() === 0;
   const clientsDraft = rec.clients_text !== undefined ? rec.clients_text
     : (rec.clients || []).map(c => (typeof c === "object" ? c.name : c)).join("\n");
   const purchasesDraft = rec.purchases_text !== undefined ? rec.purchases_text
@@ -308,6 +393,7 @@ function buildEditor(key, rec) {
       '<div><label for="f-end">Einduur</label><input id="f-end" inputmode="decimal" autocomplete="off"></div>' +
     '</div>' +
     '<div class="err" id="f-err"></div>' +
+    (isSun ? '<div class="hint">Zondag hoort bij de week van zaterdag: de uren tellen mee in het weektotaal en staan op het formulier bij zaterdag.</div>' : '') +
     '<label for="f-clients">Klanten</label>' +
     '<textarea id="f-clients" autocapitalize="words"></textarea><div class="chips" id="f-chips"></div>' +
     '<label for="f-purch">Aankopen</label>' +
@@ -440,7 +526,7 @@ function flush(rerenderHeader, forceDeleteMark) {
 /* Alleen de kopregels en totalen vernieuwen, zodat het toetsenbord open blijft. */
 function refreshHeaders() {
   const boxes = $("days").children;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 7; i++) {
     const d = addDays(weekStart, i);
     boxes[i].querySelector(".day-head").innerHTML = headHTML(i, d, recOf(iso(d)));
   }
@@ -460,7 +546,7 @@ $("thisWeek").addEventListener("click", () => {
   flush();
   weekStart = mondayOf(new Date());
   const t = iso(new Date());
-  selected = isInWeek(t) ? t : iso(weekStart);   // zondag: eerste dag van de week
+  selected = isInWeek(t) ? t : iso(weekStart);
   render();
 });
 $("rate").addEventListener("change", () => {
@@ -524,6 +610,8 @@ $("restoreFile").addEventListener("change", async e => {
         updated: d.written || new Date().toISOString() };
     });
     if (typeof d.rate === "number") state.rate = d.rate;
+    if (d.deposits && typeof d.deposits === "object") state.deposits = cleanDeposits(d.deposits);
+    if (d.corrections && typeof d.corrections === "object") state.corrections = cleanCorrections(d.corrections);
     saveState(); render(); toast(keys.length + " dag(en) hersteld.");
   } catch (err) { toast("Dit is geen geldig pc-bestand."); }
 });
@@ -622,7 +710,16 @@ function mergePc(d, force, busyKey) {
     if (!same) n++;
   }
   if (typeof d.rate === "number") state.rate = d.rate;
-  return { n, skipDel };
+  let cash = false;                                               // storting/afstemmingen: de pc is de baas
+  if (d.deposits && typeof d.deposits === "object") {
+    const nd = cleanDeposits(d.deposits);
+    if (JSON.stringify(nd) !== JSON.stringify(state.deposits)) { state.deposits = nd; cash = true; }
+  }
+  if (d.corrections && typeof d.corrections === "object") {
+    const nc = cleanCorrections(d.corrections);
+    if (JSON.stringify(nc) !== JSON.stringify(state.corrections)) { state.corrections = nc; cash = true; }
+  }
+  return { n, skipDel, cash };
 }
 /*MERGE-END*/
 let pulling = false, pullNote = "", skipDelCount = 0;
@@ -656,7 +753,8 @@ async function pullPc(force) {
     else {
       const m = mergePc(best, force, typing ? editorRefs.key : null);
       skipDelCount = m.skipDel; state.lastPc = best.written; saveState();
-      if (m.n) { if (typing) refreshHeaders(); else render(); toast(m.n + " dag(en) van de pc"); }
+      if (m.n || m.cash) { if (typing) refreshHeaders(); else render(); }
+      if (m.n) toast(m.n + " dag(en) van de pc");
       pullNote = "pc " + new Date(best.written).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" }) +
         ": " + m.n + " bijgewerkt" + (m.skipDel ? ", " + m.skipDel + " eerder gewist" : "");
     }

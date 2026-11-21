@@ -1,6 +1,6 @@
 {
-  "name": "Werkuren",
-  "short_name": "Werkuren",
+  "name": "Werkuren test",
+  "short_name": "Werkuren test",
   "description": "Werkuren, klanten en aankopen invoeren op de telefoon",
   "start_url": "./index.html",
   "scope": "./",
