@@ -159,7 +159,7 @@ function loadState() {
       const p = JSON.parse(raw);
       state.records = p.records || {};
       state.deleted = p.deleted || {};
-      state.pair = p.pair || ""; state.dirty = !!p.dirty; state.lastSent = p.lastSent || null;
+      state.pair = p.pair || ""; state.fp = p.fp || ""; state.dirty = !!p.dirty; state.lastSent = p.lastSent || null;
       state.rate = typeof p.rate === "number" ? p.rate : 13;
       state.lastExport = p.lastExport || null;
     }
@@ -593,13 +593,15 @@ function setPairStatus(t) {
   $("pairRow").style.display = state.pair ? "none" : "flex";
   $("unpair").style.display = state.pair ? "" : "none";
   $("pairStatus").textContent = !state.pair ? "" : t || (state.dirty ? "Wacht op verzending…"
-    : state.lastSent ? "Verzonden " + new Date(state.lastSent).toLocaleTimeString("nl-BE") : "Gekoppeld");
+    : (state.lastSent ? "Verzonden " + new Date(state.lastSent).toLocaleTimeString("nl-BE") : "Gekoppeld") + (state.fp ? " • controlegetal " + state.fp : ""));
 }
 $("pairBtn").addEventListener("click", () => {
   const c = $("pairCode").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
   if (c.length !== 24) { toast("Code heeft " + c.length + " tekens, het moeten er 24 zijn."); return; }
   if (!/^[A-HJKMNP-Z2-9]{24}$/.test(c)) { toast("De code bevat een ongeldig teken (geen 0, 1, O, I of L)."); return; }
-  state.pair = c; state.dirty = true; saveState(); $("pairCode").value = ""; setPairStatus(); trySend(true);
+  state.pair = c; state.fp = ""; state.dirty = true; saveState(); $("pairCode").value = "";
+  derive(c).then(d => { state.fp = d.topic.slice(3, 9); saveState(); setPairStatus(); });
+  setPairStatus(); trySend(true);
 });
 $("unpair").addEventListener("click", () => {
   if (confirm("Ontkoppelen?")) { state.pair = ""; saveState(); setPairStatus(); }
@@ -627,6 +629,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
 
 loadState();
 render();
+if (state.pair && !state.fp) derive(state.pair).then(d => { state.fp = d.topic.slice(3, 9); saveState(); setPairStatus(); });
 setPairStatus();
 maybeSend();
 </script>
