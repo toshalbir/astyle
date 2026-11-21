@@ -140,6 +140,7 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
 <div class="card sync">
     <div class="btns" id="pairRow"><input id="pairCode" placeholder="Koppelcode van de pc" autocapitalize="characters" autocomplete="off" spellcheck="false"><button id="pairBtn" class="primary">Koppel</button></div>
     <p id="pairStatus" style="margin:6px 0 0"></p>
+    <button class="link" id="pcForce" style="display:none">Gewiste pc-dagen terugzetten</button>
     <button class="link" id="unpair" style="display:none">Ontkoppelen</button>
   </div>
 </main>
@@ -159,7 +160,7 @@ function loadState() {
       const p = JSON.parse(raw);
       state.records = p.records || {};
       state.deleted = p.deleted || {};
-      state.pair = p.pair || ""; state.fp = p.fp || ""; state.dirty = !!p.dirty; state.lastSent = p.lastSent || null;
+      state.pair = p.pair || ""; state.fp = p.fp || ""; state.lastPc = p.lastPc || ""; state.dirty = !!p.dirty; state.lastSent = p.lastSent || null;
       state.rate = typeof p.rate === "number" ? p.rate : 13;
       state.lastExport = p.lastExport || null;
     }
@@ -537,10 +538,10 @@ async function hmac(key, data) {
   const k = await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", k, data));
 }
-async function derive(code) {
-  const sec = enc.encode(code), t = await hmac(sec, enc.encode("topic"));
+async function derive(code, sfx = "") {
+  const sec = enc.encode(code), t = await hmac(sec, enc.encode("topic" + sfx));
   return { topic: "wu-" + Array.from(t.slice(0, 16), x => x.toString(16).padStart(2, "0")).join(""),
-           kEnc: await hmac(sec, enc.encode("enc")), kMac: await hmac(sec, enc.encode("mac")) };
+           kEnc: await hmac(sec, enc.encode("enc" + sfx)), kMac: await hmac(sec, enc.encode("mac" + sfx)) };
 }
 async function seal(kEnc, kMac, plain) {
   const nonce = crypto.getRandomValues(new Uint8Array(16)), ct = new Uint8Array(plain.length);
@@ -560,6 +561,23 @@ async function pack(json, code) {
   const n = Math.ceil(blob.length / CHUNK), msgs = [];
   for (let k = 0; k < n; k++) msgs.push(JSON.stringify({ i: id, k: k, n: n, d: blob.slice(k * CHUNK, (k + 1) * CHUNK) }));
   return { topic, msgs };
+}
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function gunzip(u8) {
+  return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+}
+async function unseal(kEnc, kMac, raw) {
+  if (raw.length < 49) throw new Error("kort");
+  const nonce = raw.slice(0, 16), tag = raw.slice(16, 48), ct = raw.slice(48), exp = await hmac(kMac, cat(nonce, ct));
+  let bad = 0; for (let i = 0; i < 32; i++) bad |= exp[i] ^ tag[i];
+  if (bad) throw new Error("handtekening");
+  const out = new Uint8Array(ct.length);
+  for (let i = 0; i * 32 < ct.length; i++) {
+    const ks = await hmac(kEnc, cat(nonce, new Uint8Array([i >>> 24, (i >>> 16) & 255, (i >>> 8) & 255, i & 255])));
+    for (let j = 0; j < 32 && i * 32 + j < ct.length; j++) out[i * 32 + j] = ct[i * 32 + j] ^ ks[j];
+  }
+  const plain = out[0] === 0x1f && out[1] === 0x8b ? await gunzip(out) : out;
+  return JSON.parse(new TextDecoder().decode(plain));
 }
 /*CRYPTO-END*/
 function buildWindow() {
@@ -586,14 +604,75 @@ async function trySend(force) {
   } catch (e) { state.dirty = true; saveState(); }
   sending = false; setPairStatus();
 }
+/*MERGE-START*/
+function mergePc(d, force, busyKey) {
+  let n = 0, skipDel = 0;
+  for (const k in d.records) {
+    if (k === busyKey) continue;                                        // dag waar je nu in typt: later
+    const r = d.records[k], ru = r.updated || "";
+    if (!force && state.deleted[k] && state.deleted[k] >= ru) { skipDel++; continue; }   // op de telefoon gewist
+    const cur = state.records[k];
+    if (cur && (cur.updated || "") >= ru) continue;                     // telefoon is nieuwer of gelijk
+    const same = cur && JSON.stringify([cur.start, cur.end, cur.clients, cur.purchases]) === JSON.stringify([r.start || "", r.end || "", r.clients || [], r.purchases || []]);
+    state.records[k] = { start: r.start || "", end: r.end || "", clients: r.clients || [], purchases: r.purchases || [],
+      clients_text: r.clients_text ?? (r.clients || []).map(c => c.name || c).join("\n"),
+      purchases_text: r.purchases_text ?? (r.purchases || []).map(p => (p.store + " " + String(p.amount).replace(".", ",")).trim()).join("\n"),
+      updated: ru || d.written };
+    delete state.deleted[k];
+    if (!same) n++;
+  }
+  if (typeof d.rate === "number") state.rate = d.rate;
+  return { n, skipDel };
+}
+/*MERGE-END*/
+let pulling = false, pullNote = "", skipDelCount = 0;
+async function pullPc(force) {
+  if (!state.pair || pulling || document.visibilityState !== "visible") return;
+  const a = document.activeElement;
+  const typing = !!(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA") && editorRefs && document.body.contains(editorRefs.start));
+  pulling = true;
+  try {
+    const { topic, kEnc, kMac } = await derive(state.pair, "-pc");
+    const r = await fetch(NTFY + topic + "/json?poll=1&since=all");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const groups = {};
+    (await r.text()).split("\n").forEach(line => {
+      try {
+        const ev = JSON.parse(line); if (ev.event !== "message") return;
+        const m = JSON.parse(ev.message); (groups[m.i] = groups[m.i] || { n: m.n, p: {} }).p[m.k] = m.d;
+      } catch (e) {}
+    });
+    let best = null;
+    const ids = Object.keys(groups);
+    for (const id of ids) {
+      const g = groups[id]; if (Object.keys(g.p).length !== g.n) continue;
+      try {
+        const d = await unseal(kEnc, kMac, unb64(Array.from({ length: g.n }, (_, i) => g.p[i]).join("")));
+        if (d.format === "werkuren-pc" && (!best || d.written > best.written)) best = d;
+      } catch (e) {}
+    }
+    if (!ids.length) pullNote = "geen bericht van de pc gevonden";
+    else if (!best) pullNote = "pc-bericht niet te ontcijferen";
+    else {
+      const m = mergePc(best, force, typing ? editorRefs.key : null);
+      skipDelCount = m.skipDel; state.lastPc = best.written; saveState();
+      if (m.n) { if (typing) refreshHeaders(); else render(); toast(m.n + " dag(en) van de pc"); }
+      pullNote = "pc " + new Date(best.written).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" }) +
+        ": " + m.n + " bijgewerkt" + (m.skipDel ? ", " + m.skipDel + " eerder gewist" : "");
+    }
+  } catch (e) { pullNote = "pc: fout (" + (e && e.message ? e.message : e) + ")"; }
+  pulling = false; setPairStatus();
+}
 function maybeSend() {
   if (state.pair && (state.dirty || !state.lastSent || Date.now() - Date.parse(state.lastSent) > 600000)) trySend(true);
 }
 function setPairStatus(t) {
   $("pairRow").style.display = state.pair ? "none" : "flex";
   $("unpair").style.display = state.pair ? "" : "none";
-  $("pairStatus").textContent = !state.pair ? "" : t || (state.dirty ? "Wacht op verzending…"
+  $("pcForce").style.display = state.pair && skipDelCount ? "" : "none";
+  const base = !state.pair ? "" : t || (state.dirty ? "Wacht op verzending…"
     : (state.lastSent ? "Verzonden " + new Date(state.lastSent).toLocaleTimeString("nl-BE") : "Gekoppeld") + (state.fp ? " • controlegetal " + state.fp : ""));
+  $("pairStatus").textContent = base + (state.pair && pullNote ? " • " + pullNote : "");
 }
 $("pairBtn").addEventListener("click", () => {
   const c = $("pairCode").value.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -606,9 +685,11 @@ $("pairBtn").addEventListener("click", () => {
 $("unpair").addEventListener("click", () => {
   if (confirm("Ontkoppelen?")) { state.pair = ""; saveState(); setPairStatus(); }
 });
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") maybeSend(); });
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { maybeSend(); pullPc(); } });
 window.addEventListener("online", () => trySend());
+$("pcForce").addEventListener("click", () => pullPc(true));
 setInterval(() => { if (state.dirty) trySend(); }, 60000);
+setInterval(pullPc, 30000);
 
 /* ---------- toast + start ---------- */
 let toastTimer;
@@ -632,6 +713,7 @@ render();
 if (state.pair && !state.fp) derive(state.pair).then(d => { state.fp = d.topic.slice(3, 9); saveState(); setPairStatus(); });
 setPairStatus();
 maybeSend();
+pullPc();
 </script>
 </body>
 </html>
