@@ -197,8 +197,8 @@ function saveState() {
 }
 
 /* ---------- Uren doorgeven aan de Scriptable-widget ----------
-   Alleen datums, begin-/einduren en tarief gaan naar een eigen,
-   willekeurig ntfy-topic. Geen klanten, aankopen of koppelcode. */
+   Alleen datums, begin-/einduren, tarief en het jaartotaal gaan naar
+   een eigen, willekeurig ntfy-topic. Geen klanten, aankopen of koppelcode. */
 const WIDGET_TOPIC = "wu-widget-4e91c7a2b8d60f35";
 let widgetTimer = null;
 function publishStart() {
@@ -217,6 +217,26 @@ function publishStart() {
         const r = state.records[k] || {};
         records[k] = { start: r.start || "", end: r.end || "" };
       });
+      // Totaal van dit kalenderjaar: alleen één getal, geen extra gegevens.
+      const jaarStart = dag.slice(0, 4) + "-01-01";
+      let jaarMin = 0;
+      Object.keys(state.records).forEach(function (k) {
+        if (k < jaarStart || k > dag) return;
+        if (state.deleted && state.deleted[k]) return;
+        const r = state.records[k] || {};
+        let s, e;
+        try { s = parseTime(r.start); e = parseTime(r.end); } catch (err) { return; }
+        if (s === null) return;
+        let min = 0;
+        if (e !== null) {
+          min = e - s;
+          if (min < 0) min += 24 * 60;
+        } else if (k === dag) {
+          min = nu.getHours() * 60 + nu.getMinutes() - s;   // vandaag loopt nog
+        }
+        if (min > 0) jaarMin += min;
+      });
+
       const rec = state.records[dag] || {};
       const body = JSON.stringify({
         date: dag,
@@ -224,6 +244,7 @@ function publishStart() {
         end: rec.end || "",
         rate: Number(state.rate) > 0 ? Number(state.rate) : 13,
         records: records,
+        yearMin: Math.round(jaarMin),
         at: Date.now()
       });
       await fetch(NTFY + WIDGET_TOPIC, { method: "POST", body: body, headers: { "X-Title": "Werkuren widget" } });
