@@ -1,6 +1,6 @@
 {
-  "name": "Werkuren test",
-  "short_name": "Werkuren test",
+  "name": "Astyle uren",
+  "short_name": "Astyle uren",
   "description": "Werkuren, klanten en aankopen invoeren op de telefoon",
   "start_url": "./index.html",
   "scope": "./",
