@@ -7,7 +7,7 @@ const TOPIC = "wu-widget-4e91c7a2b8d60f35";   // zelfde topic als in de astyle-p
 const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 3;                   // iOS beslist uiteindelijk
-const VERSIE = "6";                          // staat in de voetregel van de widget
+const VERSIE = "7";                          // staat in de voetregel van de widget
 const APP_URL = "https://toshalbir.github.io/astyle/";
 
 const fm = FileManager.local();
@@ -116,7 +116,7 @@ function minutenVoor(rec, key, nu, vandaag) {
 
 const nu = new Date();
 const vandaag = dateKey(nu);
-const info = { fout: null, cached: false, oud: false, geenStart: false };
+const info = { fout: null, cached: false, oud: false, geenStart: false, yearMin: null };
 
 let berichten = [];
 try {
@@ -150,10 +150,11 @@ if (data) {
   info.tarief = Number(data.rate) > 0 ? Number(data.rate) : UURLOON_FALLBACK;
   info.records = (data.records && typeof data.records === "object") ? data.records : null;
   info.geenStart = !info.start;
+  info.yearMin = (typeof data.yearMin === "number" && isFinite(data.yearMin)) ? data.yearMin : null;
   if (!info.records) info.oud = true;
   writeCache({
     date: vandaag, start: data.start || "", end: data.end || "",
-    rate: info.tarief, records: info.records
+    rate: info.tarief, records: info.records, yearMin: info.yearMin
   });
 } else {
   const oud = readCache();
@@ -163,6 +164,7 @@ if (data) {
     info.tarief = Number(oud.rate) > 0 ? Number(oud.rate) : UURLOON_FALLBACK;
     info.records = (oud.records && typeof oud.records === "object") ? oud.records : null;
     info.geenStart = !info.start;
+    info.yearMin = (typeof oud.yearMin === "number" && isFinite(oud.yearMin)) ? oud.yearMin : null;
     info.cached = true;
   } else if (!berichten.length) {
     info.fout = "Geen verbinding";
@@ -294,7 +296,7 @@ async function bouwWidget() {
 
   widget.addSpacer(20);
 
-  function addRegel(titel, euro, minuten) {
+  function addRegel(titel, euro, minuten, override) {
     const regel = widget.addStack();
     regel.layoutHorizontally();
     regel.centerAlignContent();
@@ -305,18 +307,23 @@ async function bouwWidget() {
 
     regel.addSpacer();
 
-    const waarde = regel.addText(euroBedrag(euro));
+    const waarde = regel.addText(override === undefined ? euroBedrag(euro) : override);
     waarde.font = Font.boldSystemFont(21);
     waarde.textColor = NAVY;
 
-    const sub = widget.addText(`${duurTekst(minuten)} uur`);
+    const sub = widget.addText(override === undefined ? `${duurTekst(minuten)} uur` : "app bijwerken");
     sub.font = Font.systemFont(12);
     sub.textColor = ZACHT;
   }
 
   addRegel("Deze week", info.euroWeek, info.weekMin);
-  widget.addSpacer(14);
+  widget.addSpacer(10);
   addRegel("Deze maand", info.euroMaand, info.maandMin);
+  widget.addSpacer(10);
+  addRegel("Dit jaar",
+    info.yearMin === null ? 0 : (info.yearMin / 60) * info.tarief,
+    info.yearMin === null ? 0 : info.yearMin,
+    info.yearMin === null ? "—" : undefined);
 
   widget.addSpacer();
 
