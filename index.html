@@ -192,8 +192,31 @@ function loadState() {
   } catch (e) { /* lege start */ }
 }
 function saveState() {
-  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); return true; }
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); publishStart(); return true; }
   catch (e) { toast("Opslaan mislukt. Is de opslag vol of geblokkeerd?"); return false; }
+}
+
+/* ---------- Startuur doorgeven aan de Scriptable-widget ----------
+   Alleen datum, beginuur, einduur en tarief gaan naar een eigen,
+   willekeurig ntfy-topic. Geen klanten, aankopen of koppelcode. */
+const WIDGET_TOPIC = "wu-widget-4e91c7a2b8d60f35";
+let widgetTimer = null;
+function publishStart() {
+  clearTimeout(widgetTimer);
+  widgetTimer = setTimeout(async () => {
+    const dag = iso(new Date());
+    const rec = state.records[dag] || {};
+    const body = JSON.stringify({
+      date: dag,
+      start: rec.start || "",
+      end: rec.end || "",
+      rate: state.rate,
+      at: Date.now()
+    });
+    try {
+      await fetch(NTFY + WIDGET_TOPIC, { method: "POST", body: body, headers: { "X-Title": "Werkuren widget" } });
+    } catch (e) { /* widget werkt gewoon weer bij de volgende opslag */ }
+  }, 2500);
 }
 
 /* ---------- datum helpers ---------- */
@@ -812,6 +835,7 @@ if (state.pair && !state.fp) derive(state.pair).then(d => { state.fp = d.topic.s
 setPairStatus();
 maybeSend();
 pullPc();
+publishStart();
 </script>
 </body>
 </html>
