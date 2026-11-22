@@ -7,7 +7,7 @@ const TOPIC = "wu-widget-4e91c7a2b8d60f35";   // zelfde topic als in de astyle-p
 const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 3;                   // iOS beslist uiteindelijk
-const VERSIE = "7";                          // staat in de voetregel van de widget
+const VERSIE = "8";                          // staat in de voetregel van de widget
 const APP_URL = "https://toshalbir.github.io/astyle/";
 
 const fm = FileManager.local();
@@ -144,13 +144,26 @@ if (metRecords.length) {
   data = vanVandaag[0].d;                    // oude app: alleen begin-/einduur
 }
 
+// De pc stuurt het volledige jaartotaal als los bericht (alleen één getal).
+// De telefoon bewaart maar ~28 dagen, dus dat cijfer is onvolledig: geef
+// het pc-bericht voorrang. Het veld heet 'dag' zodat het niet als gewoon
+// urenbericht van vandaag wordt gezien.
+const pcBerichten = berichten
+  .filter(function (b) {
+    return b.d && b.d.source === "pc" && b.d.dag === vandaag &&
+      typeof b.d.yearMin === "number" && isFinite(b.d.yearMin);
+  })
+  .sort(function (a, b) { return b.tijd - a.tijd; });
+const pcYearMin = pcBerichten.length ? pcBerichten[0].d.yearMin : null;
+
 if (data) {
   info.start = parseTime(data.start);
   info.eind = parseTime(data.end);
   info.tarief = Number(data.rate) > 0 ? Number(data.rate) : UURLOON_FALLBACK;
   info.records = (data.records && typeof data.records === "object") ? data.records : null;
   info.geenStart = !info.start;
-  info.yearMin = (typeof data.yearMin === "number" && isFinite(data.yearMin)) ? data.yearMin : null;
+  info.yearMin = pcYearMin !== null ? pcYearMin :
+    ((typeof data.yearMin === "number" && isFinite(data.yearMin)) ? data.yearMin : null);
   if (!info.records) info.oud = true;
   writeCache({
     date: vandaag, start: data.start || "", end: data.end || "",
@@ -164,7 +177,8 @@ if (data) {
     info.tarief = Number(oud.rate) > 0 ? Number(oud.rate) : UURLOON_FALLBACK;
     info.records = (oud.records && typeof oud.records === "object") ? oud.records : null;
     info.geenStart = !info.start;
-    info.yearMin = (typeof oud.yearMin === "number" && isFinite(oud.yearMin)) ? oud.yearMin : null;
+    info.yearMin = pcYearMin !== null ? pcYearMin :
+      ((typeof oud.yearMin === "number" && isFinite(oud.yearMin)) ? oud.yearMin : null);
     info.cached = true;
   } else if (!berichten.length) {
     info.fout = "Geen verbinding";
