@@ -7,6 +7,7 @@ const TOPIC = "wu-widget-4e91c7a2b8d60f35";   // zelfde topic als in de astyle-p
 const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 10;                  // iOS beslist uiteindelijk
+const VERSIE = "2";                          // staat in de voetregel van de widget
 const APP_URL = "https://toshalbir.github.io/astyle/";
 
 const fm = FileManager.local();
@@ -23,7 +24,18 @@ function dateKey(d) {
 function hhmm(h, m) { return `${pad(h)}:${pad(m)}`; }
 
 function parseTime(value) {
-  const match = String(value || "").trim().match(/^(\d{1,2})[:.](\d{2})$/);
+  const v = String(value || "").trim();
+  if (!v) return null;
+
+  // astyle accepteert ook een los uur: "8" betekent 08:00 (net als in de app).
+  let match = v.match(/^(\d{1,2})$/);
+  if (match) {
+    const h = Number(match[1]);
+    if (h > 23) return null;
+    return { h: h, m: 0, mins: h * 60 };
+  }
+
+  match = v.match(/^(\d{1,2})[:.](\d{2})$/);
   if (!match) return null;
   const h = Number(match[1]);
   const m = Number(match[2]);
@@ -194,7 +206,7 @@ async function bouwWidget() {
   widget.addSpacer(4);
 
   const voet = widget.addText(
-    `start ${hhmm(info.start.h, info.start.m)} · €${info.tarief}/u` +
+    `start ${hhmm(info.start.h, info.start.m)} · €${info.tarief}/u · v${VERSIE}` +
     (info.cached ? " · offline" : "")
   );
   voet.font = Font.caption2();
