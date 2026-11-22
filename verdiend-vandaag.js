@@ -7,7 +7,7 @@ const TOPIC = "wu-widget-4e91c7a2b8d60f35";   // zelfde topic als in de astyle-p
 const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 3;                   // iOS beslist uiteindelijk
-const VERSIE = "5";                          // staat in de voetregel van de widget
+const VERSIE = "6";                          // staat in de voetregel van de widget
 const APP_URL = "https://toshalbir.github.io/astyle/";
 
 const fm = FileManager.local();
@@ -116,7 +116,7 @@ function minutenVoor(rec, key, nu, vandaag) {
 
 const nu = new Date();
 const vandaag = dateKey(nu);
-const info = { fout: null, cached: false, oud: false };
+const info = { fout: null, cached: false, oud: false, geenStart: false };
 
 let berichten = [];
 try {
@@ -125,29 +125,44 @@ try {
   console.log("ntfy niet bereikbaar");
 }
 
-// Nieuwste bericht van vandaag met een niet-leeg beginuur.
-const geldig = berichten
-  .filter(function (b) { return b.d && b.d.date === vandaag && parseTime(b.d.start); })
+// Alle berichten van vandaag, nieuwste eerst.
+const vanVandaag = berichten
+  .filter(function (b) { return b.d && b.d.date === vandaag; })
   .sort(function (a, b) { return b.tijd - a.tijd; });
 
-let data = geldig.length ? geldig[0].d : null;
+// Een oude app-instantie stuurt soms berichten zónder records. Die negeren we,
+// anders springt de widget terug naar uren die allang gewist zijn.
+const metRecords = vanVandaag.filter(function (b) {
+  const r = b.d.records;
+  return r && typeof r === "object" && Object.keys(r).length > 0;
+});
+
+let data = null;
+if (metRecords.length) {
+  data = metRecords[0].d;                    // nieuwste bericht mét urenoverzicht
+} else if (vanVandaag.length) {
+  data = vanVandaag[0].d;                    // oude app: alleen begin-/einduur
+}
 
 if (data) {
   info.start = parseTime(data.start);
   info.eind = parseTime(data.end);
   info.tarief = Number(data.rate) > 0 ? Number(data.rate) : UURLOON_FALLBACK;
   info.records = (data.records && typeof data.records === "object") ? data.records : null;
+  info.geenStart = !info.start;
+  if (!info.records) info.oud = true;
   writeCache({
-    date: vandaag, start: data.start, end: data.end || "",
+    date: vandaag, start: data.start || "", end: data.end || "",
     rate: info.tarief, records: info.records
   });
 } else {
   const oud = readCache();
-  if (oud && oud.date === vandaag && parseTime(oud.start)) {
+  if (oud && oud.date === vandaag) {
     info.start = parseTime(oud.start);
     info.eind = parseTime(oud.end);
     info.tarief = Number(oud.rate) > 0 ? Number(oud.rate) : UURLOON_FALLBACK;
     info.records = (oud.records && typeof oud.records === "object") ? oud.records : null;
+    info.geenStart = !info.start;
     info.cached = true;
   } else if (!berichten.length) {
     info.fout = "Geen verbinding";
@@ -157,15 +172,26 @@ if (data) {
 }
 
 if (!info.fout) {
-  info.startDate = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate(),
-    info.start.h, info.start.m, 0, 0);
-
-  // Zorg dat vandaag altijd aanwezig is, ook bij een ouder bericht.
   const recs = Object.assign({}, info.records || {});
-  recs[vandaag] = { start: hhmm(info.start.h, info.start.m), end: info.eind ? hhmm(info.eind.h, info.eind.m) : "" };
-  if (!info.records) info.oud = true;
 
-  info.minuten = minutenVoor(recs[vandaag], vandaag, nu, vandaag);
+  if (info.start) {
+    info.startDate = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate(),
+      info.start.h, info.start.m, 0, 0);
+    recs[vandaag] = {
+      start: hhmm(info.start.h, info.start.m),
+      end: info.eind ? hhmm(info.eind.h, info.eind.m) : ""
+    };
+    info.minuten = minutenVoor(recs[vandaag], vandaag, nu, vandaag);
+    info.afgelopen = !!info.eind && info.eind.mins >= info.start.mins && nu >= new Date(
+      nu.getFullYear(), nu.getMonth(), nu.getDate(),
+      info.eind.h, info.eind.m, 0, 0);
+    info.toekomst = nu < info.startDate;
+    info.duur = duurTekst(info.minuten);
+  } else {
+    // Beginuur is in de app leeggehaald: vandaag niet meetellen.
+    delete recs[vandaag];
+    info.minuten = 0;
+  }
 
   const weekKey = dateKey(mondayOf(nu));
   const maandPrefix = vandaag.slice(0, 7);
@@ -184,12 +210,6 @@ if (!info.fout) {
   info.euroMaand = (maandMin / 60) * info.tarief;
   info.weekMin = weekMin;
   info.maandMin = maandMin;
-
-  info.afgelopen = !!info.eind && info.eind.mins >= info.start.mins && nu >= new Date(
-    nu.getFullYear(), nu.getMonth(), nu.getDate(),
-    info.eind.h, info.eind.m, 0, 0);
-  info.toekomst = nu < info.startDate;
-  info.duur = duurTekst(info.minuten);
 }
 
 // ── Widget bouwen ────────────────────────────────────────────
@@ -233,9 +253,9 @@ async function bouwWidget() {
   hoofd.layoutHorizontally();
   hoofd.centerAlignContent();
 
-  const bedrag = hoofd.addText(euroBedrag(info.euroVandaag));
+  const bedrag = hoofd.addText(info.geenStart ? "—" : euroBedrag(info.euroVandaag));
   bedrag.font = Font.boldSystemFont(48);
-  bedrag.textColor = info.toekomst ? ZACHT : BLAUW;
+  bedrag.textColor = info.geenStart || info.toekomst ? ZACHT : BLAUW;
   bedrag.minimumScaleFactor = 0.5;
   bedrag.lineLimit = 1;
 
@@ -250,21 +270,27 @@ async function bouwWidget() {
   rij.layoutHorizontally();
   rij.centerAlignContent();
 
-  let timer;
-  if (info.afgelopen) {
-    timer = rij.addText(info.duur);
+  if (info.geenStart) {
+    const leeg = rij.addText("nog geen beginuur ingevuld");
+    leeg.font = Font.mediumSystemFont(13);
+    leeg.textColor = ZACHT;
   } else {
-    timer = rij.addDate(info.startDate);
-    timer.applyTimerStyle();   // loopt live door zonder widget-refresh
-  }
-  timer.font = Font.mediumMonospacedSystemFont(17);
-  timer.textColor = NAVY;
+    let timer;
+    if (info.afgelopen) {
+      timer = rij.addText(info.duur);
+    } else {
+      timer = rij.addDate(info.startDate);
+      timer.applyTimerStyle();   // loopt live door zonder widget-refresh
+    }
+    timer.font = Font.mediumMonospacedSystemFont(17);
+    timer.textColor = NAVY;
 
-  const achtervoegsel = rij.addText(
-    info.toekomst ? "  tot start" : (info.afgelopen ? "  gewerkt · klaar" : "  gewerkt")
-  );
-  achtervoegsel.font = Font.mediumSystemFont(13);
-  achtervoegsel.textColor = ZACHT;
+    const achtervoegsel = rij.addText(
+      info.toekomst ? "  tot start" : (info.afgelopen ? "  gewerkt · klaar" : "  gewerkt")
+    );
+    achtervoegsel.font = Font.mediumSystemFont(13);
+    achtervoegsel.textColor = ZACHT;
+  }
 
   widget.addSpacer(20);
 
@@ -294,9 +320,9 @@ async function bouwWidget() {
 
   widget.addSpacer();
 
+  const startTekst = info.geenStart ? "geen start" : `start ${hhmm(info.start.h, info.start.m)}`;
   const voet = widget.addText(
-    `start ${hhmm(info.start.h, info.start.m)} · €${info.tarief}/u · v${VERSIE}` +
-    (info.cached ? " · offline" : "")
+    `${startTekst} · €${info.tarief}/u · v${VERSIE}` + (info.cached ? " · offline" : "")
   );
   voet.font = Font.systemFont(11);
   voet.textColor = ZACHT;
