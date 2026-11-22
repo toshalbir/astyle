@@ -93,8 +93,6 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
 .chips button.fx{background:var(--navy);color:#fff;border-color:var(--navy)}
 .chips button.rc{border-color:var(--green);color:var(--green)}
 @media (prefers-color-scheme:dark){.chips button.fx{background:#2c5a94;border-color:#2c5a94}}
-.day.appendix{margin-left:22px;border-style:dashed}
-.day.appendix .name::before{content:"\21B3  ";color:var(--muted);font-weight:400}
 .cash{background:var(--bg);border-radius:10px;padding:12px 14px;margin-top:12px;line-height:1.45}
 .cash .main{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:16px;font-weight:700}
 .cash .main b{color:var(--green);font-size:21px}
@@ -156,7 +154,7 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
 <script>
 "use strict";
 const STORE_KEY = "werkuren-test.v1";   // eigen opslag: raakt de gewone Werkuren-app niet aan
-const DAY_NAMES = ["Maandag","Dinsdag","Woensdag","Donderdag","Vrijdag","Zaterdag","Zondag"];   // zondag = bijlage bij zaterdag
+const DAY_NAMES = ["Maandag","Dinsdag","Woensdag","Donderdag","Vrijdag","Zaterdag","Zondag"];   // 7 gelijkwaardige dagen
 
 /* ---------- opslag ---------- */
 let state = { records: {}, deleted: {}, rate: 13, lastExport: null, deposits: {}, corrections: {} };
@@ -419,7 +417,7 @@ function render() {
   for (let i = 0; i < 7; i++) {
     const d = addDays(weekStart, i), key = iso(d), rec = recOf(key), open = key === selected;
     const box = document.createElement("div");
-    box.className = "day" + (open ? " open" : "") + (key === todayKey ? " today" : "") + (i === 6 ? " appendix" : "");
+    box.className = "day" + (open ? " open" : "") + (key === todayKey ? " today" : "");
     const head = document.createElement("button");
     head.className = "day-head"; head.innerHTML = headHTML(i, d, rec);
     head.addEventListener("click", () => { flush(); selected = open ? null : key; render(); });
@@ -437,7 +435,6 @@ let saveTimer = null, editorRefs = null;
 function buildEditor(key, rec) {
   const ed = document.createElement("div");
   ed.className = "editor";
-  const isSun = new Date(+key.slice(0, 4), +key.slice(5, 7) - 1, +key.slice(8, 10)).getDay() === 0;
   const clientsDraft = rec.clients_text !== undefined ? rec.clients_text
     : (rec.clients || []).map(c => (typeof c === "object" ? c.name : c)).join("\n");
   const purchasesDraft = rec.purchases_text !== undefined ? rec.purchases_text
@@ -449,7 +446,6 @@ function buildEditor(key, rec) {
       '<div><label for="f-end">Einduur</label><input id="f-end" inputmode="decimal" autocomplete="off"></div>' +
     '</div>' +
     '<div class="err" id="f-err"></div>' +
-    (isSun ? '<div class="hint">Zondag hoort bij de week van zaterdag: de uren tellen mee in het weektotaal en staan op het formulier bij zaterdag.</div>' : '') +
     '<label for="f-clients">Klanten</label>' +
     '<textarea id="f-clients" autocapitalize="words"></textarea><div class="chips" id="f-chips"></div>' +
     '<label for="f-purch">Aankopen</label>' +
