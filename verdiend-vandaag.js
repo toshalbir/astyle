@@ -7,7 +7,7 @@ const TOPIC = "wu-widget-4e91c7a2b8d60f35";   // zelfde topic als in de astyle-p
 const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 3;                   // iOS beslist uiteindelijk
-const VERSIE = "4";                          // staat in de voetregel van de widget
+const VERSIE = "5";                          // staat in de voetregel van de widget
 const APP_URL = "https://toshalbir.github.io/astyle/";
 
 const fm = FileManager.local();
@@ -195,30 +195,36 @@ if (!info.fout) {
 // ── Widget bouwen ────────────────────────────────────────────
 
 async function bouwWidget() {
+  const WIT = new Color("#FFFFFF");
+  const BLAUW = new Color("#1D4ED8");
+  const NAVY = new Color("#17365D");
+  const ZACHT = new Color("#64748B");
+  const WAARSCHUWING = new Color("#B45309");
+
   const widget = new ListWidget();
-  widget.backgroundColor = new Color("#11161F");
+  widget.backgroundColor = WIT;
   widget.setPadding(16, 18, 14, 18);
   widget.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTEN * 60 * 1000);
   widget.url = APP_URL;
 
   const kop = widget.addText(info.oud ? "VERDIEND · VERSE APP NODIG" : "VERDIEND");
-  kop.font = Font.mediumSystemFont(11);
-  kop.textColor = new Color("#8B98A9");
+  kop.font = Font.mediumSystemFont(13);
+  kop.textColor = NAVY;
+  widget.addSpacer(8);
 
   if (info.fout) {
-    widget.addSpacer(8);
     const groot = widget.addText("—");
-    groot.font = Font.boldSystemFont(42);
-    groot.textColor = Color.white();
+    groot.font = Font.boldSystemFont(48);
+    groot.textColor = NAVY;
 
     const melding = widget.addText(info.fout);
-    melding.font = Font.footnote();
-    melding.textColor = new Color("#F0B429");
+    melding.font = Font.mediumSystemFont(14);
+    melding.textColor = WAARSCHUWING;
     melding.lineLimit = 2;
 
     const tip = widget.addText("Beginuur invullen in astyle");
-    tip.font = Font.caption2();
-    tip.textColor = new Color("#6B7686");
+    tip.font = Font.systemFont(12);
+    tip.textColor = ZACHT;
     return widget;
   }
 
@@ -228,15 +234,17 @@ async function bouwWidget() {
   hoofd.centerAlignContent();
 
   const bedrag = hoofd.addText(euroBedrag(info.euroVandaag));
-  bedrag.font = Font.boldSystemFont(42);
-  bedrag.textColor = info.toekomst ? new Color("#8B98A9") : new Color("#6EE7B7");
+  bedrag.font = Font.boldSystemFont(48);
+  bedrag.textColor = info.toekomst ? ZACHT : BLAUW;
   bedrag.minimumScaleFactor = 0.5;
   bedrag.lineLimit = 1;
 
-  hoofd.addSpacer(8);
+  hoofd.addSpacer(10);
   const label = hoofd.addText("vandaag");
-  label.font = Font.mediumSystemFont(12);
-  label.textColor = new Color("#8B98A9");
+  label.font = Font.mediumSystemFont(14);
+  label.textColor = ZACHT;
+
+  widget.addSpacer(4);
 
   const rij = widget.addStack();
   rij.layoutHorizontally();
@@ -249,16 +257,16 @@ async function bouwWidget() {
     timer = rij.addDate(info.startDate);
     timer.applyTimerStyle();   // loopt live door zonder widget-refresh
   }
-  timer.font = Font.mediumMonospacedSystemFont(15);
-  timer.textColor = Color.white();
+  timer.font = Font.mediumMonospacedSystemFont(17);
+  timer.textColor = NAVY;
 
   const achtervoegsel = rij.addText(
-    info.toekomst ? " tot start" : (info.afgelopen ? " gewerkt · klaar" : " gewerkt")
+    info.toekomst ? "  tot start" : (info.afgelopen ? "  gewerkt · klaar" : "  gewerkt")
   );
-  achtervoegsel.font = Font.footnote();
-  achtervoegsel.textColor = new Color("#8B98A9");
+  achtervoegsel.font = Font.mediumSystemFont(13);
+  achtervoegsel.textColor = ZACHT;
 
-  widget.addSpacer(14);
+  widget.addSpacer(20);
 
   function addRegel(titel, euro, minuten) {
     const regel = widget.addStack();
@@ -266,22 +274,22 @@ async function bouwWidget() {
     regel.centerAlignContent();
 
     const naam = regel.addText(titel);
-    naam.font = Font.mediumSystemFont(12);
-    naam.textColor = new Color("#8B98A9");
+    naam.font = Font.mediumSystemFont(14);
+    naam.textColor = NAVY;
 
     regel.addSpacer();
 
     const waarde = regel.addText(euroBedrag(euro));
-    waarde.font = Font.boldSystemFont(18);
-    waarde.textColor = Color.white();
+    waarde.font = Font.boldSystemFont(21);
+    waarde.textColor = NAVY;
 
     const sub = widget.addText(`${duurTekst(minuten)} uur`);
-    sub.font = Font.caption2();
-    sub.textColor = new Color("#6B7686");
+    sub.font = Font.systemFont(12);
+    sub.textColor = ZACHT;
   }
 
   addRegel("Deze week", info.euroWeek, info.weekMin);
-  widget.addSpacer(8);
+  widget.addSpacer(14);
   addRegel("Deze maand", info.euroMaand, info.maandMin);
 
   widget.addSpacer();
@@ -290,8 +298,8 @@ async function bouwWidget() {
     `start ${hhmm(info.start.h, info.start.m)} · €${info.tarief}/u · v${VERSIE}` +
     (info.cached ? " · offline" : "")
   );
-  voet.font = Font.caption2();
-  voet.textColor = new Color("#6B7686");
+  voet.font = Font.systemFont(11);
+  voet.textColor = ZACHT;
   voet.lineLimit = 1;
 
   return widget;
