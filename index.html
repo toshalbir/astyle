@@ -196,24 +196,36 @@ function saveState() {
   catch (e) { toast("Opslaan mislukt. Is de opslag vol of geblokkeerd?"); return false; }
 }
 
-/* ---------- Startuur doorgeven aan de Scriptable-widget ----------
-   Alleen datum, beginuur, einduur en tarief gaan naar een eigen,
+/* ---------- Uren doorgeven aan de Scriptable-widget ----------
+   Alleen datums, begin-/einduren en tarief gaan naar een eigen,
    willekeurig ntfy-topic. Geen klanten, aankopen of koppelcode. */
 const WIDGET_TOPIC = "wu-widget-4e91c7a2b8d60f35";
 let widgetTimer = null;
 function publishStart() {
   clearTimeout(widgetTimer);
   widgetTimer = setTimeout(async () => {
-    const dag = iso(new Date());
-    const rec = state.records[dag] || {};
-    const body = JSON.stringify({
-      date: dag,
-      start: rec.start || "",
-      end: rec.end || "",
-      rate: state.rate,
-      at: Date.now()
-    });
     try {
+      const nu = new Date();
+      const dag = iso(nu);
+      const maand = dag.slice(0, 7);
+      const wkStart = iso(mondayOf(nu));
+      const wkEind = iso(addDays(mondayOf(nu), 6));
+      const records = {};
+      Object.keys(state.records).sort().forEach(function (k) {
+        if (state.deleted && state.deleted[k]) return;
+        if (!(k === dag || k.slice(0, 7) === maand || (k >= wkStart && k <= wkEind))) return;
+        const r = state.records[k] || {};
+        records[k] = { start: r.start || "", end: r.end || "" };
+      });
+      const rec = state.records[dag] || {};
+      const body = JSON.stringify({
+        date: dag,
+        start: rec.start || "",
+        end: rec.end || "",
+        rate: Number(state.rate) > 0 ? Number(state.rate) : 13,
+        records: records,
+        at: Date.now()
+      });
       await fetch(NTFY + WIDGET_TOPIC, { method: "POST", body: body, headers: { "X-Title": "Werkuren widget" } });
     } catch (e) { /* widget werkt gewoon weer bij de volgende opslag */ }
   }, 2500);
