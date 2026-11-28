@@ -8,7 +8,7 @@ const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 15;                   // vraag niet vaker dan elk kwartier
 const APP_URL = "https://toshalbir.github.io/astyle/";
-const VERSIE = "L2";
+const VERSIE = "L3";
 
 const fm = FileManager.local();
 const cachePath = fm.joinPath(fm.documentsDirectory(), "werkuren-lockscreen-cache.json");
@@ -249,9 +249,36 @@ info.euro = (info.minuten / 60) * info.tarief;
 
 // ── Widget bouwen ────────────────────────────────────────────
 
+// iOS haalt op het lockscreen de achtergrond van een widget weg. Daarom tekenen
+// we de witte achtergrond én het bedrag in één afbeelding: die is wél inhoud en
+// blijft dus zichtbaar. Het getal staat er groot en donker in, zonder extra tekst.
+function maakBedragPlaatje(tekst, familie) {
+  const rond = familie === "accessoryCircular";
+  const breedte = rond ? 180 : 200;
+  const hoogte = rond ? 180 : 70;
+
+  const tekening = new DrawContext();
+  tekening.size = new Size(breedte, hoogte);
+  tekening.respectScreenScale = true;
+  tekening.opaque = true;
+  tekening.setFillColor(Color.white());
+  tekening.fillRect(new Rect(0, 0, breedte, hoogte));
+
+  // Passend maken: langere bedragen worden automatisch iets kleiner.
+  let grootte = rond ? 48 : 34;
+  grootte = Math.min(grootte, Math.floor((breedte * 0.88) / Math.max(1, tekst.length * 0.58)));
+  tekening.setFont(Font.boldSystemFont(grootte));
+  tekening.setTextColor(Color.black());
+  tekening.setTextAlignedCenter();
+  const regelHoogte = grootte * 1.25;
+  const y = Math.max(0, (hoogte - regelHoogte) / 2);
+  tekening.drawTextInRect(tekst, new Rect(0, y, breedte, regelHoogte));
+
+  return tekening.getImage();
+}
+
 async function bouwWidget() {
-  const WIT = new Color("#FFFFFF");
-  const INKT = new Color("#111827");
+  const familie = config.widgetFamily || "accessoryRectangular";
 
   const widget = new ListWidget();
   // Volgende kwartgrens: geen onnodige refreshes, maar wel regelmatig actueel.
@@ -259,29 +286,19 @@ async function bouwWidget() {
     Math.ceil((Date.now() + 1000) / (REFRESH_MINUTEN * 60 * 1000)) * (REFRESH_MINUTEN * 60 * 1000)
   );
   widget.url = APP_URL;
-  widget.backgroundColor = WIT;                  // wit, ook op het lockscreen
-  widget.addAccessoryWidgetBackground = false;   // geen transparante systeemachtergrond
+  widget.backgroundColor = Color.white();
+  widget.addAccessoryWidgetBackground = false;
+  widget.setPadding(0, 0, 0, 0);
 
-  const familie = config.widgetFamily || "accessoryRectangular";
   if (familie === "accessoryInline") {
-    // Inline toont alleen tekst; lettertype en kleur worden door iOS genegeerd.
+    // Inline toont alleen tekst; achtergrond en lettertype worden door iOS genegeerd.
     widget.addText(info.fout ? "—" : euroBedrag(info.euro));
     return widget;
   }
 
-  const marge = familie === "accessoryCircular" ? 2 : 4;
-  widget.setPadding(marge, marge, marge, marge);
-  widget.addSpacer();
-
-  // Eén getal, zo groot als de ruimte toelaat. Niets erbij.
-  const bedrag = widget.addText(info.fout ? "—" : euroBedrag(info.euro));
-  bedrag.font = Font.boldSystemFont(familie === "accessoryCircular" ? 26 : 40);
-  bedrag.textColor = INKT;
-  bedrag.minimumScaleFactor = 0.25;
-  bedrag.lineLimit = 1;
-  bedrag.centerAlignText();
-
-  widget.addSpacer();
+  const tekst = info.fout ? "—" : euroBedrag(info.euro);
+  const plaatje = widget.addImage(maakBedragPlaatje(tekst, familie));
+  plaatje.applyFillingContentMode();
   return widget;
 }
 
