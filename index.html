@@ -198,56 +198,101 @@ function saveState() {
    Alleen datums, begin-/einduren, tarief en het jaartotaal gaan naar
    een eigen, willekeurig ntfy-topic. Geen klanten, aankopen of koppelcode. */
 const WIDGET_TOPIC = "wu-widget-4e91c7a2b8d60f35";
-let widgetTimer = null;
-function publishStart() {
-  clearTimeout(widgetTimer);
-  widgetTimer = setTimeout(async () => {
-    try {
-      const nu = new Date();
-      const dag = iso(nu);
-      const maand = dag.slice(0, 7);
-      const wkStart = iso(mondayOf(nu));
-      const wkEind = iso(addDays(mondayOf(nu), 6));
-      const records = {};
-      Object.keys(state.records).sort().forEach(function (k) {
-        if (state.deleted && state.deleted[k]) return;
-        if (!(k === dag || k.slice(0, 7) === maand || (k >= wkStart && k <= wkEind))) return;
-        const r = state.records[k] || {};
-        records[k] = { start: r.start || "", end: r.end || "" };
-      });
-      // Totaal van dit kalenderjaar: alleen één getal, geen extra gegevens.
-      const jaarStart = dag.slice(0, 4) + "-01-01";
-      let jaarMin = 0;
-      Object.keys(state.records).forEach(function (k) {
-        if (k < jaarStart || k > dag) return;
-        if (state.deleted && state.deleted[k]) return;
-        const r = state.records[k] || {};
-        let s, e;
-        try { s = parseTime(r.start); e = parseTime(r.end); } catch (err) { return; }
-        if (s === null) return;
-        let min = 0;
-        if (e !== null) {
-          min = e - s;
-          if (min < 0) min += 24 * 60;
-        } else if (k === dag) {
-          min = nu.getHours() * 60 + nu.getMinutes() - s;   // vandaag loopt nog
-        }
-        if (min > 0) jaarMin += min;
-      });
+const WIDGET_LAST_START_KEY = "werkuren-widget-last-start";
+const WIDGET_LAST_BODY_KEY = "werkuren-widget-last-body";
+let widgetTimer = null, widgetPending = false;
+let widgetLastBody = "", widgetLastStart = "";
+try {
+  widgetLastStart = localStorage.getItem(WIDGET_LAST_START_KEY) || "";
+  widgetLastBody = localStorage.getItem(WIDGET_LAST_BODY_KEY) || "";
+} catch (e) {}
+async function publiceerWidgetNu(beacon) {
+  try {
+    const nu = new Date();
+    const dag = iso(nu);
+    const maand = dag.slice(0, 7);
+    const wkStart = iso(mondayOf(nu));
+    const wkEind = iso(addDays(mondayOf(nu), 6));
+    const records = {};
+    Object.keys(state.records).sort().forEach(function (k) {
+      if (state.deleted && state.deleted[k]) return;
+      if (!(k === dag || k.slice(0, 7) === maand || (k >= wkStart && k <= wkEind))) return;
+      const r = state.records[k] || {};
+      records[k] = { start: r.start || "", end: r.end || "" };
+    });
+    // Totaal van dit kalenderjaar: alleen één getal, geen extra gegevens.
+    const jaarStart = dag.slice(0, 4) + "-01-01";
+    let jaarMin = 0;
+    Object.keys(state.records).forEach(function (k) {
+      if (k < jaarStart || k > dag) return;
+      if (state.deleted && state.deleted[k]) return;
+      const r = state.records[k] || {};
+      let s, e;
+      try { s = parseTime(r.start); e = parseTime(r.end); } catch (err) { return; }
+      if (s === null) return;
+      let min = 0;
+      if (e !== null) {
+        min = e - s;
+        if (min < 0) min += 24 * 60;
+      } else if (k === dag) {
+        min = nu.getHours() * 60 + nu.getMinutes() - s;   // vandaag loopt nog
+      }
+      if (min > 0) jaarMin += min;
+    });
 
-      const rec = state.records[dag] || {};
-      const body = JSON.stringify({
-        date: dag,
-        start: rec.start || "",
-        end: rec.end || "",
-        rate: Number(state.rate) > 0 ? Number(state.rate) : 13,
-        records: records,
-        yearMin: Math.round(jaarMin),
-        at: Date.now()
-      });
-      await fetch(NTFY + WIDGET_TOPIC, { method: "POST", body: body, headers: { "X-Title": "Werkuren widget" } });
-    } catch (e) { /* widget werkt gewoon weer bij de volgende opslag */ }
-  }, 2500);
+    const rec = state.records[dag] || {};
+    const startNu = rec.start || "";
+    // Op 15 minuten afronden: het jaartotaal loopt mee zonder dat we elke
+    // minuut een nieuw bericht sturen.
+    const jaarMinRond = Math.round(jaarMin / 15) * 15;
+    // Alleen posten als er iets veranderd is. pullPc() roept saveState()
+    // immers elke 30 seconden aan, ook zonder nieuwe gegevens.
+    const payload = {
+      date: dag,
+      start: startNu,
+      end: rec.end || "",
+      rate: Number(state.rate) > 0 && isFinite(state.rate) ? Number(state.rate) : 13,
+      records: records,
+      yearMin: jaarMinRond
+    };
+    if (widgetLastStart && !startNu) payload.clear = true;   // beginuur echt gewist
+    const handtekening = JSON.stringify(payload);
+    if (handtekening === widgetLastBody) { widgetPending = false; return; }
+    const vorige = widgetLastBody, vorigeStart = widgetLastStart;
+    widgetLastBody = handtekening;
+    widgetLastStart = startNu;
+    const body = JSON.stringify(Object.assign({ at: Date.now() }, payload));
+    try {
+      if (beacon && navigator.sendBeacon) {
+        // Bij sluiten/achtergronden mag iOS de fetch annuleren; beacon komt wél aan.
+        navigator.sendBeacon(NTFY + WIDGET_TOPIC,
+          new Blob([body], { type: "text/plain;charset=UTF-8" }));
+      } else {
+        const antwoord = await fetch(NTFY + WIDGET_TOPIC, {
+          method: "POST", body: body,
+          headers: { "X-Title": "Werkuren widget" },
+          keepalive: !!beacon
+        });
+        if (!antwoord.ok) throw new Error("HTTP " + antwoord.status);
+      }
+      widgetPending = false;
+      try {
+        localStorage.setItem(WIDGET_LAST_START_KEY, startNu);
+        localStorage.setItem(WIDGET_LAST_BODY_KEY, handtekening);
+      } catch (e) {}
+    } catch (e) {
+      // Niets als bezorgd markeren: bij de volgende opslag of online-event
+      // wordt het opnieuw gestuurd.
+      widgetLastBody = vorige;
+      widgetLastStart = vorigeStart;
+      widgetPending = true;
+    }
+  } catch (e) { /* widget werkt gewoon weer bij de volgende opslag */ }
+}
+function publishStart() {
+  widgetPending = true;
+  clearTimeout(widgetTimer);
+  widgetTimer = setTimeout(function () { widgetTimer = null; publiceerWidgetNu(false); }, 2500);
 }
 
 /* ---------- datum helpers ---------- */
@@ -538,7 +583,7 @@ function schedule() {
 
 /* 830 / 8,30 / 8.30 worden 8:30 (het iOS-toetsenbord heeft geen dubbele punt) */
 function normTime(v) {
-  v = v.trim().replace(/[,.]/, ":");
+  v = v.trim().replace(/[,.]/g, ":");
   if (/^\d{3,4}$/.test(v)) v = v.slice(0, -2) + ":" + v.slice(-2);
   return v;
 }
@@ -747,11 +792,16 @@ async function trySend(force) {
 /*MERGE-START*/
 function mergePc(d, force, busyKey) {
   let n = 0, skipDel = 0;
+  const vandaagKey = iso(new Date());
   for (const k in d.records) {
     if (k === busyKey) continue;                                        // dag waar je nu in typt: later
     const r = d.records[k], ru = r.updated || "";
     if (!force && state.deleted[k] && state.deleted[k] >= ru) { skipDel++; continue; }   // op de telefoon gewist
     const cur = state.records[k];
+    // Vandaag is de telefoon de bron. Een pc-snapshot (bij het openen of
+    // elke 30 s) mag de uren van vandaag niet overschrijven; alleen de
+    // expliciete knop "pc-force" mag dat.
+    if (!force && k === vandaagKey && cur && (cur.start || cur.end)) continue;
     if (cur && (cur.updated || "") >= ru) continue;                     // telefoon is nieuwer of gelijk
     const same = cur && JSON.stringify([cur.start, cur.end, cur.clients, cur.purchases]) === JSON.stringify([r.start || "", r.end || "", r.clients || [], r.purchases || []]);
     state.records[k] = { start: r.start || "", end: r.end || "", clients: r.clients || [], purchases: r.purchases || [],
@@ -761,7 +811,8 @@ function mergePc(d, force, busyKey) {
     delete state.deleted[k];
     if (!same) n++;
   }
-  if (typeof d.rate === "number") state.rate = d.rate;
+  // Tarief is van de telefoon; een pc-snapshot mag het niet stiekem wijzigen.
+  if (force && typeof d.rate === "number" && isFinite(d.rate) && d.rate > 0) state.rate = d.rate;
   let cash = false;                                               // storting/afstemmingen: de pc is de baas
   if (d.deposits && typeof d.deposits === "object") {
     const nd = cleanDeposits(d.deposits);
@@ -835,8 +886,19 @@ $("pairBtn").addEventListener("click", () => {
 $("unpair").addEventListener("click", () => {
   if (confirm("Ontkoppelen?")) { state.pair = ""; saveState(); setPairStatus(); }
 });
-document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") { maybeSend(); pullPc(); } });
-window.addEventListener("online", () => trySend());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { maybeSend(); pullPc(); }
+  else if (widgetTimer) {                    // wacht niet op de 2,5 s als je weggaat
+    clearTimeout(widgetTimer); widgetTimer = null; publiceerWidgetNu(true);
+  }
+});
+window.addEventListener("pagehide", () => {
+  if (widgetTimer) { clearTimeout(widgetTimer); widgetTimer = null; publiceerWidgetNu(true); }
+});
+window.addEventListener("online", () => {
+  trySend();
+  if (widgetPending) publiceerWidgetNu(false);   // mislukte widget-post alsnog sturen
+});
 $("pcForce").addEventListener("click", () => pullPc(true));
 setInterval(() => { if (state.dirty) trySend(); }, 60000);
 setInterval(pullPc, 30000);
