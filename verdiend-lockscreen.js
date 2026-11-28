@@ -3,12 +3,15 @@
 // Werkt als accessoryRectangular, accessoryInline en accessoryCircular.
 // ─────────────────────────────────────────────────────────────
 
-const TOPIC = "wu-widget-4e91c7a2b8d60f35";   // zelfde topic als in de astyle-patch
+// Plak hier je privé-topic uit de iOS-app (knop "Widget-topic") als je je uren niet publiek wilt maken.
+// Laat leeg voor het oude, publieke topic.
+const TOPIC_OVERRIDE = "";
+const TOPIC = TOPIC_OVERRIDE || "wu-widget-4e91c7a2b8d60f35";
 const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 15;                   // vraag niet vaker dan elk kwartier
 const APP_URL = "https://toshalbir.github.io/astyle/";
-const VERSIE = "L3";
+const VERSIE = "L4";
 
 const fm = FileManager.local();
 const cachePath = fm.joinPath(fm.documentsDirectory(), "werkuren-lockscreen-cache.json");

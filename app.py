@@ -346,6 +346,12 @@ class WorkHoursApp:
         ttk.Button(actions2, text="🔄  Synchroniseer met telefoon", command=lambda: self._sync_now()).pack(side="left", padx=(8, 0))
         ttk.Button(actions2, text="📁  Synchronisatiemap", command=self._pick_sync_folder).pack(side="left", padx=(8, 0))
         ttk.Button(actions2, text="📱  Bestand importeren", command=self._import_phone).pack(side="left", padx=(8, 0))
+        actions3 = ttk.Frame(main)
+        actions3.pack(fill="x", pady=(8, 0))
+        ttk.Label(actions3, text="Widget-topic:", foreground="#64748b").pack(side="left")
+        self.widget_topic_var = tk.StringVar(value=self._widget_topic())
+        ttk.Entry(actions3, textvariable=self.widget_topic_var, width=42).pack(side="left", padx=(8, 0), fill="x", expand=True)
+        ttk.Button(actions3, text="Opslaan", command=self._save_widget_topic).pack(side="left", padx=(8, 0))
 
         self.status = ttk.Label(main, text="", foreground="#64748b")
         self.status.pack(anchor="w", pady=(8, 0))
@@ -611,6 +617,10 @@ class WorkHoursApp:
                 continue
         return totaal
 
+    def _widget_topic(self):
+        topic = str(self._load_settings().get("widget_topic") or WIDGET_TOPIC).strip()
+        return topic if re.fullmatch(r"wu-[0-9A-Za-z_-]{8,64}", topic) else WIDGET_TOPIC
+
     def _publish_widget_year(self):
         """Stuur alleen het jaartotaal naar het widget-topic (geen klantgegevens)."""
         try:
@@ -622,7 +632,7 @@ class WorkHoursApp:
                 "at": int(time.time() * 1000)
             }).encode("utf-8")
             req = urllib.request.Request(
-                NTFY_URL + WIDGET_TOPIC, data=body,
+                NTFY_URL + self._widget_topic(), data=body,
                 headers={"Content-Type": "application/json", "User-Agent": "werkuren"},
                 method="POST")
             with urllib.request.urlopen(req, timeout=10):
@@ -927,6 +937,18 @@ class WorkHoursApp:
             SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Instellingen opslaan mislukt:\n{exc}")
+
+    def _save_widget_topic(self):
+        topic = self.widget_topic_var.get().strip() or WIDGET_TOPIC
+        if not re.fullmatch(r"wu-[0-9A-Za-z_-]{8,64}", topic):
+            messagebox.showerror(APP_NAME, "Ongeldig topic. Het moet beginnen met wu- en alleen letters, cijfers, - of _ bevatten.")
+            return
+        settings = self._load_settings()
+        settings["widget_topic"] = topic
+        self._save_settings(settings)
+        self._widget_last = 0
+        self._publish_widget_year_async()
+        self.status.configure(text="Widget-topic opgeslagen.")
 
     def _pick_sync_folder(self):
         """Kies de map waarin de telefoon het bestand bewaart (bv. OneDrive\\Werkuren)."""

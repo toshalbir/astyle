@@ -97,6 +97,7 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
 .cash .main{display:flex;justify-content:space-between;align-items:baseline;gap:10px;font-size:16px;font-weight:700}
 .cash .main b{color:var(--green);font-size:21px}
 .cash .sub{font-size:13px;color:var(--muted);margin-top:3px}
+.topic{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;word-break:break-all;background:var(--bg);border-radius:8px;padding:8px 10px;margin:6px 0}
 </style>
 </head>
 <body>
@@ -141,6 +142,15 @@ textarea{overflow:hidden}#f-clients{min-height:150px}#f-purch{min-height:84px}
 <div class="card sync">
     <div class="btns"><button id="restore">Herstel van pc&hellip;</button></div>
     <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+  </div>
+<div class="card sync">
+    <h2>Widget-topic</h2>
+    <div class="topic" id="widgetTopic"></div>
+    <div class="btns">
+      <button id="copyTopic">Kopieer topic</button>
+      <button id="newTopic">Nieuw privé-topic</button>
+    </div>
+    <p class="hint">Standaard is dit topic publiek. Maak een privé-topic en plak het in béide Scriptable-widgets als je je werktijden niet publiek wilt maken.</p>
   </div>
 <div class="card sync">
     <div class="btns" id="pairRow"><input id="pairCode" placeholder="Koppelcode van de pc" autocapitalize="characters" autocomplete="off" spellcheck="false"><button id="pairBtn" class="primary">Koppel</button></div>
@@ -197,7 +207,10 @@ function saveState() {
 /* ---------- Uren doorgeven aan de Scriptable-widget ----------
    Alleen datums, begin-/einduren, tarief en het jaartotaal gaan naar
    een eigen, willekeurig ntfy-topic. Geen klanten, aankopen of koppelcode. */
-const WIDGET_TOPIC = "wu-widget-4e91c7a2b8d60f35";
+const WIDGET_TOPIC_STANDAARD = "wu-widget-4e91c7a2b8d60f35";
+const WIDGET_TOPIC_KEY = "werkuren-widget-topic";
+let widgetTopic = WIDGET_TOPIC_STANDAARD;
+try { widgetTopic = localStorage.getItem(WIDGET_TOPIC_KEY) || WIDGET_TOPIC_STANDAARD; } catch (e) {}
 const WIDGET_LAST_START_KEY = "werkuren-widget-last-start";
 const WIDGET_LAST_BODY_KEY = "werkuren-widget-last-body";
 let widgetTimer = null, widgetPending = false;
@@ -212,6 +225,36 @@ try {
   }
   widgetLastBody = localStorage.getItem(WIDGET_LAST_BODY_KEY) || "";
 } catch (e) {}
+
+function toonWidgetTopic() {
+  const el = document.getElementById("widgetTopic");
+  if (el) el.textContent = widgetTopic;
+}
+function nieuwWidgetTopic() {
+  const b = new Uint8Array(16); crypto.getRandomValues(b);
+  return "wu-" + Array.from(b, x => x.toString(16).padStart(2, "0")).join("");
+}
+const copyTopicBtn = document.getElementById("copyTopic");
+if (copyTopicBtn) copyTopicBtn.addEventListener("click", async () => {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(widgetTopic);
+    else {
+      const t = document.createElement("textarea"); t.value = widgetTopic; document.body.appendChild(t);
+      t.select(); document.execCommand("copy"); t.remove();
+    }
+    toast("Widget-topic gekopieerd.");
+  } catch (e) { toast("Kopiëren mislukt; selecteer de tekst handmatig."); }
+});
+const newTopicBtn = document.getElementById("newTopic");
+if (newTopicBtn) newTopicBtn.addEventListener("click", () => {
+  if (!confirm("Nieuw privé-topic? Plak het daarna in béide Scriptable-widgets, anders stoppen de widgets.")) return;
+  widgetTopic = nieuwWidgetTopic();
+  try { localStorage.setItem(WIDGET_TOPIC_KEY, widgetTopic); localStorage.removeItem(WIDGET_LAST_BODY_KEY); } catch (e) {}
+  widgetLastBody = "";
+  toonWidgetTopic(); publishStart();
+  toast("Nieuw privé-topic aangemaakt.");
+});
+toonWidgetTopic();
 /* iOS laat een fetch soms hangen; met een abort timer blijven de wachtrijen niet vastlopen. */
 async function fetchMetTimeout(url, opties, ms) {
   const controller = new AbortController();
@@ -283,11 +326,11 @@ async function publiceerWidgetNu(beacon) {
     try {
       if (beacon && navigator.sendBeacon) {
         // Bij sluiten/achtergronden mag iOS de fetch annuleren; beacon komt wél aan.
-        const ok = navigator.sendBeacon(NTFY + WIDGET_TOPIC,
+        const ok = navigator.sendBeacon(NTFY + widgetTopic,
           new Blob([body], { type: "text/plain;charset=UTF-8" }));
         if (!ok) throw new Error("beacon geweigerd");   // wachtrij vol: niet als bezorgd markeren
       } else {
-        const antwoord = await fetchMetTimeout(NTFY + WIDGET_TOPIC, {
+        const antwoord = await fetchMetTimeout(NTFY + widgetTopic, {
           method: "POST", body: body,
           headers: { "X-Title": "Werkuren widget" },
           keepalive: !!beacon
@@ -396,7 +439,22 @@ function depositFor(y, m) {                       // eigen waarde van die maand,
   for (const x in dep) if (x < k && (best === null || x > best)) best = x;
   return best === null ? 0 : dep[best];
 }
-function dayHours(key) { const r = state.records[key]; return r ? hoursBetween(r.start, r.end) : 0; }
+function lopendeDienst() {
+  const nu = new Date(), k = iso(nu), g = iso(addDays(nu, -1));
+  return [k, g].some(x => { const r = state.records[x]; return !!(r && r.start && !r.end); });
+}
+function dayHours(key) {
+  const r = state.records[key]; if (!r) return 0;
+  const afgerond = hoursBetween(r.start, r.end);
+  if (r.end || afgerond) return afgerond;              // dienst met einduur is klaar
+  let s;
+  try { s = parseTime(r.start); } catch (e) { return 0; }
+  if (s === null) return 0;
+  const nu = new Date(), nuMin = nu.getHours() * 60 + nu.getMinutes();
+  if (key === iso(nu) && nuMin >= s) return (nuMin - s) / 60;                 // vandaag loopt nog
+  if (key === iso(addDays(nu, -1)) && nuMin < s) return (nuMin + 24 * 60 - s) / 60;  // nachtdienst door
+  return 0;
+}
 function monthEarned(y, m, upto) {                // verdiend uit uren in die maand, t/m 'upto' (Date) of de hele maand
   let last = new Date(y, m, 0).getDate();
   if (upto) {
@@ -434,10 +492,11 @@ function weekCash(a, b) {                         // cash voor de uren van a t/m
 const hasCashEffect = (y, m) => depositFor(y, m) > 0 || hasCorr(y, m);
 const esc = t => String(t).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function headHTML(i, d, rec) {
-  const h = hoursBetween(rec.start, rec.end);
+  const h = dayHours(iso(d));
   const cl = (rec.clients || []).map(c => typeof c === "object" ? c.name : c).filter(Boolean).join(", ");
   const pu = (rec.purchases || []).map(p => (p.store + " " + eur(+p.amount || 0)).trim()).join("; ");
-  const t = rec.start || rec.end ? (rec.start || "—") + " – " + (rec.end || "—") : "";
+  function geldig(v) { try { return parseTime(v) !== null; } catch (e) { return false; } }
+  const t = rec.start || rec.end ? ((geldig(rec.start) ? rec.start : "—") + " – " + (geldig(rec.end) ? rec.end : "—")) : "";
   return '<div class="top"><div><span class="name">' + DAY_NAMES[i] + '</span><span class="date">' + fmtShort(d) + '</span></div>' +
     '<div class="nums"><span class="hours' + (h ? "" : " zero") + '">' + (h ? nl(h) + " u" : "—") + '</span><span class="pay">' + (h ? eur(h * state.rate) : "") + '</span></div></div>' +
     (t ? '<div class="line">🕐 ' + esc(t) + '</div>' : "") + (cl ? '<div class="line">👤 ' + esc(cl) + '</div>' : "") + (pu ? '<div class="line">🧾 ' + esc(pu) + '</div>' : "");
@@ -446,7 +505,7 @@ function updateTotals() {
   let h = 0, p = 0;
   for (let i = 0; i < 7; i++) {
     const rec = recOf(iso(addDays(weekStart, i)));
-    h += hoursBetween(rec.start, rec.end);
+    h += dayHours(iso(addDays(weekStart, i)));
     (rec.purchases || []).forEach(x => { p += +x.amount || 0; });
   }
   $("totHours").textContent = "Totaal uren: " + nl(h);
@@ -465,9 +524,9 @@ function updateTotals() {
   const ref = selected && isInWeek(selected) ? selected : iso(weekStart), pre = ref.slice(0, 7);
   let mh = 0, mp = 0, md = 0;
   for (const k in state.records) if (k.startsWith(pre)) {
-    const r = state.records[k], x = hoursBetween(r.start, r.end);
+    const rec = state.records[k], x = dayHours(k);
     mh += x; if (x) md++;
-    (r.purchases || []).forEach(y => { mp += +y.amount || 0; });
+    (rec.purchases || []).forEach(y => { mp += +y.amount || 0; });
   }
   const mn = new Date(+pre.slice(0, 4), +pre.slice(5, 7) - 1, 1).toLocaleString("nl-BE", { month: "long", year: "numeric" });
   const py = +pre.slice(0, 4), pm = +pre.slice(5, 7);
@@ -874,6 +933,10 @@ async function pullPc(force) {
   const a = document.activeElement;
   const typing = !!(a && editorRefs && document.body.contains(editorRefs.start) &&
     [editorRefs.start, editorRefs.end, editorRefs.clients, editorRefs.purch].includes(a));
+  if (!globalThis.crypto || !crypto.subtle || typeof DecompressionStream === "undefined") {
+    pullNote = "pc-sync niet beschikbaar: https en iOS 16.4+ nodig";
+    setPairStatus(); return;
+  }
   pulling = true;
   try {
     const { topic, kEnc, kMac } = await derive(state.pair, "-pc");
@@ -900,12 +963,16 @@ async function pullPc(force) {
     if (!ids.length) pullNote = "geen bericht van de pc gevonden";
     else if (!best) pullNote = "pc-bericht niet te ontcijferen";
     else {
-      const m = mergePc(best, force, typing ? editorRefs.key : null);
-      skipDelCount = m.skipDel; state.lastPc = best.written; saveState();
-      if (m.n || m.cash) { if (typing) refreshHeaders(); else render(); }
-      if (m.n) toast(m.n + " dag(en) van de pc");
-      pullNote = "pc " + new Date(best.written).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" }) +
-        ": " + m.n + " bijgewerkt" + (m.skipDel ? ", " + m.skipDel + " eerder gewist" : "");
+      const tijd = new Date(best.written).toLocaleTimeString("nl-BE", { hour: "2-digit", minute: "2-digit" });
+      if (!force && state.lastPc === best.written) {
+        pullNote = "pc " + tijd + ": ongewijzigd";       // zelfde snapshot niet opnieuw verwerken
+      } else {
+        const m = mergePc(best, force, typing ? editorRefs.key : null);
+        skipDelCount = m.skipDel; state.lastPc = best.written; saveState();
+        if (m.n || m.cash) { if (typing) refreshHeaders(); else render(); }
+        if (m.n) toast(m.n + " dag(en) van de pc");
+        pullNote = "pc " + tijd + ": " + m.n + " bijgewerkt" + (m.skipDel ? ", " + m.skipDel + " eerder gewist" : "");
+      }
     }
   } catch (e) { pullNote = "pc: fout (" + (e && e.message ? e.message : e) + ")"; }
   pulling = false; setPairStatus();
@@ -952,6 +1019,11 @@ window.addEventListener("online", () => {
 $("pcForce").addEventListener("click", () => pullPc(true));
 setInterval(() => { if (state.dirty) trySend(); }, 60000);
 setInterval(pullPc, 30000);
+setInterval(() => {
+  if (document.visibilityState !== "visible") return;
+  refreshHeaders();                                   // lopende dienst telt nu ook in week/maand mee
+  if (lopendeDienst()) publishStart();                // jaartotaal van de widget loopt mee
+}, 60000);
 
 /* ---------- toast + start ---------- */
 let toastTimer;
