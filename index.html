@@ -678,9 +678,10 @@ function flush(rerenderHeader, forceDeleteMark) {
   r.err.textContent = msg;
 
   const old = state.records[r.key];
-  // Ongeldige tijden nooit opslaan of publiceren: behoud de laatste geldige waarde.
-  const veiligeStart = start && startOk ? start : (old && old.start) || "";
-  const veiligeEind = end && endOk ? end : (old && old.end) || "";
+  // Een leeg veld is een bewuste wissing. Alleen een óngeldige, niet-lege
+  // waarde behoudt de laatste geldige waarde.
+  const veiligeStart = !start ? "" : (startOk ? start : (old && old.start) || "");
+  const veiligeEind = !end ? "" : (endOk ? end : (old && old.end) || "");
   if (msg && !start && !end && !clientsText.trim() && !purchText.trim() && !old) return;
   const isEmpty = !veiligeStart && !veiligeEind && !clientsText.trim() && !purchText.trim();
   if (isEmpty) {
