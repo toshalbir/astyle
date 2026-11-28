@@ -7,7 +7,7 @@ const TOPIC = "wu-widget-4e91c7a2b8d60f35";   // zelfde topic als in de astyle-p
 const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 15;                  // iOS beslist uiteindelijk; rustiger voor je budget
-const VERSIE = "9";                          // staat in de voetregel van de widget
+const VERSIE = "10";                         // staat in de voetregel van de widget
 const APP_URL = "https://toshalbir.github.io/astyle/";
 
 const fm = FileManager.local();
@@ -137,6 +137,20 @@ function minutenOpVandaag(rec, key, nu) {
   return b > a ? (b - a) / 60000 : 0;
 }
 
+// Alleen een échte nachtdienst (einduur vóór beginuur) loopt door naar
+// vandaag. Een leeg einduur betekent "nog niet ingevuld", niet "doorlopend".
+function nachtOverdracht(rec, key, nu) {
+  const s = parseTime(rec && rec.start);
+  const e = parseTime(rec && rec.end);
+  if (!s || !e || e.mins > s.mins) return 0;
+  const t = tijdenVoor(rec, key);
+  if (!t || !t.end) return 0;
+  const dagStart = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate());
+  const a = Math.max(t.start.getTime(), dagStart.getTime());
+  const b = Math.min(t.end.getTime(), nu.getTime());
+  return b > a ? (b - a) / 60000 : 0;
+}
+
 // Minuten voor één dagrecord, voor de week- en maandtotalen.
 function minutenVoor(rec, key, nu, vandaag) {
   const t = tijdenVoor(rec, key);
@@ -239,7 +253,7 @@ if (data) {
     .filter(function (b) {
       return b.d && b.d.date === gisterSleutel && b.d.records &&
         b.d.records[gisterSleutel] &&
-        minutenOpVandaag(b.d.records[gisterSleutel], gisterSleutel, nu) > 0;
+        nachtOverdracht(b.d.records[gisterSleutel], gisterSleutel, nu) > 0;
     })
     .sort(function (a, b) { return b.tijd - a.tijd; })[0];
   if (gisterNacht) {
@@ -295,7 +309,7 @@ if (!info.fout) {
     info.minuten = 0;
   }
 
-  const overdracht = minutenOpVandaag(recs[gisteren], gisteren, nu);
+  const overdracht = nachtOverdracht(recs[gisteren], gisteren, nu);
   if (overdracht > 0) {
     info.minuten += overdracht;               // ook na middernacht mee verdiend
     if (!info.start) {

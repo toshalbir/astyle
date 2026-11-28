@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────
-// VERDIEND — kleine lockscreen-widget: alleen vandaag al verdiend
+// VERDIEND — lockscreen-widget: alléén het bedrag van vandaag, groot op wit.
 // Werkt als accessoryRectangular, accessoryInline en accessoryCircular.
 // ─────────────────────────────────────────────────────────────
 
@@ -8,7 +8,7 @@ const NTFY = "https://ntfy.sh/";
 const UURLOON_FALLBACK = 13;
 const REFRESH_MINUTEN = 15;                   // vraag niet vaker dan elk kwartier
 const APP_URL = "https://toshalbir.github.io/astyle/";
-const VERSIE = "L1";
+const VERSIE = "L2";
 
 const fm = FileManager.local();
 const cachePath = fm.joinPath(fm.documentsDirectory(), "werkuren-lockscreen-cache.json");
@@ -78,13 +78,6 @@ function duurTekst(minuten) {
   return `${Math.floor(minuten / 60)}:${pad(Math.floor(minuten % 60))}`;
 }
 
-// Op een lichte wallpaper blijft witte tekst leesbaar met een zachte schaduw.
-function schaduw(tekst) {
-  tekst.shadowColor = new Color("#000000", 0.4);
-  tekst.shadowRadius = 2;
-  return tekst;
-}
-
 async function haalBerichten() {
   const url = `${NTFY}${TOPIC}/json?poll=1&since=all&_=${Date.now()}`;
   const req = new Request(url);
@@ -140,6 +133,20 @@ function minutenOpVandaag(rec, key, nu) {
   const dagStart = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate());
   const a = Math.max(t.start.getTime(), dagStart.getTime());
   const b = Math.min(t.end ? t.end.getTime() : nu.getTime(), nu.getTime());
+  return b > a ? (b - a) / 60000 : 0;
+}
+
+// Alleen een échte nachtdienst (einduur vóór beginuur) loopt door naar
+// vandaag. Een leeg einduur betekent "nog niet ingevuld", niet "doorlopend".
+function nachtOverdracht(rec, key, nu) {
+  const s = parseTime(rec && rec.start);
+  const e = parseTime(rec && rec.end);
+  if (!s || !e || e.mins > s.mins) return 0;
+  const t = tijdenVoor(rec, key);
+  if (!t || !t.end) return 0;
+  const dagStart = new Date(nu.getFullYear(), nu.getMonth(), nu.getDate());
+  const a = Math.max(t.start.getTime(), dagStart.getTime());
+  const b = Math.min(t.end.getTime(), nu.getTime());
   return b > a ? (b - a) / 60000 : 0;
 }
 
@@ -216,8 +223,8 @@ if (data) {
   info.fout = berichten.length ? "Nog geen beginuur ingevuld" : "Geen verbinding";
 }
 
-// Nachtdienst van gisteren loopt vandaag nog door — ook als er vandaag nog
-// geen bericht is (je bent bijvoorbeeld nog niet in de app geweest).
+// Een nachtdienst van gisteren loopt vandaag nog door — ook als er vandaag
+// nog geen bericht is. Lege einduren tellen niet mee.
 const gisteren = dateKey(new Date(nu.getFullYear(), nu.getMonth(), nu.getDate() - 1));
 const gisterBericht = berichten
   .filter(function (b) {
@@ -226,7 +233,7 @@ const gisterBericht = berichten
   })
   .sort(function (a, b) { return b.tijd - a.tijd; })[0];
 if (gisterBericht && gisterBericht.d.records[gisteren]) {
-  const overdracht = minutenOpVandaag(gisterBericht.d.records[gisteren], gisteren, nu);
+  const overdracht = nachtOverdracht(gisterBericht.d.records[gisteren], gisteren, nu);
   if (overdracht > 0) {
     info.fout = null;
     info.minuten += overdracht;
@@ -244,7 +251,7 @@ info.euro = (info.minuten / 60) * info.tarief;
 
 async function bouwWidget() {
   const WIT = new Color("#FFFFFF");
-  const ZACHT = new Color("#FFFFFF", 0.72);
+  const INKT = new Color("#111827");
 
   const widget = new ListWidget();
   // Volgende kwartgrens: geen onnodige refreshes, maar wel regelmatig actueel.
@@ -252,65 +259,29 @@ async function bouwWidget() {
     Math.ceil((Date.now() + 1000) / (REFRESH_MINUTEN * 60 * 1000)) * (REFRESH_MINUTEN * 60 * 1000)
   );
   widget.url = APP_URL;
-  widget.addAccessoryWidgetBackground = config.runsInAccessoryWidget;
+  widget.backgroundColor = WIT;                  // wit, ook op het lockscreen
+  widget.addAccessoryWidgetBackground = false;   // geen transparante systeemachtergrond
 
   const familie = config.widgetFamily || "accessoryRectangular";
-  if (config.runsInAccessoryWidget) {
-    const p = familie === "accessoryCircular" ? 2 : 6;
-    widget.setPadding(p, 8, p, 8);            // krap bemeten op het lockscreen
-  }
-
   if (familie === "accessoryInline") {
-    // Inline toont maar één tekst; lettertypen worden door iOS genegeerd.
-    schaduw(widget.addText(info.fout ? "VERDIEND · —" : `${euroBedrag(info.euro)} · vandaag`));
+    // Inline toont alleen tekst; lettertype en kleur worden door iOS genegeerd.
+    widget.addText(info.fout ? "—" : euroBedrag(info.euro));
     return widget;
   }
 
-  if (familie === "accessoryCircular") {
-    const bedrag = schaduw(widget.addText(info.fout ? "—" : euroKort(info.euro)));
-    bedrag.font = Font.boldSystemFont(21);
-    bedrag.textColor = WIT;
-    bedrag.minimumScaleFactor = 0.5;
-    bedrag.centerAlignText();
+  const marge = familie === "accessoryCircular" ? 2 : 4;
+  widget.setPadding(marge, marge, marge, marge);
+  widget.addSpacer();
 
-    const label = schaduw(widget.addText("vandaag"));
-    label.font = Font.mediumSystemFont(12);
-    label.textColor = ZACHT;
-    label.centerAlignText();
-    return widget;
-  }
-
-  // accessoryRectangular (ook als preview wanneer je het script in Scriptable start)
-  const kop = schaduw(widget.addText("VERDIEND VANDAAG"));
-  kop.font = Font.mediumSystemFont(11);
-  kop.textColor = ZACHT;
-
-  widget.addSpacer(4);
-
-  const bedrag = schaduw(widget.addText(info.fout ? "—" : euroBedrag(info.euro)));
-  bedrag.font = Font.boldSystemFont(26);
-  bedrag.textColor = WIT;
-  bedrag.minimumScaleFactor = 0.5;
+  // Eén getal, zo groot als de ruimte toelaat. Niets erbij.
+  const bedrag = widget.addText(info.fout ? "—" : euroBedrag(info.euro));
+  bedrag.font = Font.boldSystemFont(familie === "accessoryCircular" ? 26 : 40);
+  bedrag.textColor = INKT;
+  bedrag.minimumScaleFactor = 0.25;
   bedrag.lineLimit = 1;
+  bedrag.centerAlignText();
 
-  widget.addSpacer(2);
-
-  let voetTekst;
-  if (info.fout) {
-    voetTekst = info.fout;
-  } else if (info.toekomst) {
-    voetTekst = `vanaf ${hhmm(info.start.h, info.start.m)}` + (info.cached ? " · offline" : "");
-  } else if (info.start) {
-    voetTekst = `${info.nacht ? "nacht" : "sinds"} ${hhmm(info.start.h, info.start.m)} · ` +
-      `${duurTekst(info.minuten)} u` + (info.cached ? " · offline" : "");
-  } else {
-    voetTekst = "beginuur invullen in astyle";
-  }
-  const voet = schaduw(widget.addText(voetTekst));
-  voet.font = Font.systemFont(11);
-  voet.textColor = ZACHT;
-  voet.lineLimit = 1;
-
+  widget.addSpacer();
   return widget;
 }
 
